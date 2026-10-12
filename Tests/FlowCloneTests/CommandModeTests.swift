@@ -104,6 +104,23 @@ final class CommandModeTests: XCTestCase {
         XCTAssertEqual(result, .failure(.outputRejected))
     }
 
+    /// Stops at the token limit, each token one character: the shortest output
+    /// a model can give when it hits `maxTokens`.
+    private final class TokenLimitedModel: TextModel, @unchecked Sendable {
+        let id = "qwen"
+        let isAvailable = true
+        func generate(instructions: String, prompt: String, options: TextGenerationOptions) async throws -> String {
+            String(repeating: "a", count: options.maxTokens)
+        }
+    }
+
+    func testOutputCutOffAtTheTokenLimitIsRejected() async {
+        let withSelection = await LanguageTasks.command(request(), models: [TokenLimitedModel()])
+        XCTAssertEqual(withSelection, .failure(.outputRejected))
+        let atCursor = await LanguageTasks.command(request("write a reply", selection: ""), models: [TokenLimitedModel()])
+        XCTAssertEqual(atCursor, .failure(.outputRejected))
+    }
+
     func testEveryModelRejectedGivesTypedFailure() async {
         let qwen = FakeTextModel("qwen", reply: .error)
         let apple = FakeTextModel("apple", reply: .text(""))
@@ -117,11 +134,23 @@ final class CommandModeTests: XCTestCase {
             "\"Could you send the deck before Friday?\"",
             "```\nCould you send the deck before Friday?\n```",
             "Voici le texte : Could you send the deck before Friday?",
+            "Sure! Here's the rewritten text: Could you send the deck before Friday?",
+            "Sure! Here’s a more formal version:\n\nCould you send the deck before Friday?",
+            "Bien sûr, voici le texte : Could you send the deck before Friday?",
+            "Certainly, I made it more formal:\nCould you send the deck before Friday?",
         ]
         for reply in cases {
             let model = FakeTextModel("apple", reply: .text(reply))
             let result = await LanguageTasks.command(request(), models: [model])
             XCTAssertEqual(try? result.get().text, "Could you send the deck before Friday?", reply)
+        }
+    }
+
+    func testAnOutputThatOnlyStartsLikeAPreambleIsKept() async {
+        for reply in ["Of course we can meet: Friday works.", "Sure, Friday works: see you then."] {
+            let model = FakeTextModel("apple", reply: .text(reply))
+            let result = await LanguageTasks.command(request("reply yes", selection: ""), models: [model])
+            XCTAssertEqual(try? result.get().text, reply, reply)
         }
     }
 

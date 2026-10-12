@@ -99,7 +99,9 @@ extension LanguageTasks {
             models,
             instructions: commandInstructions(request, hasSelection: hasSelection),
             prompt: commandPrompt(request, hasSelection: hasSelection),
-            options: TextGenerationOptions(maxTokens: maxLength / 2, sampling: .greedy)
+            // A token decodes to at least one character, so an output cut off at the
+            // token limit is longer than `maxLength` and rejected, never pasted half-done.
+            options: TextGenerationOptions(maxTokens: maxLength + 1, sampling: .greedy)
         ) { response -> String? in
             let cleaned = TextHeuristics.stripCommandWrapping(response)
             return !cleaned.isEmpty && cleaned.count <= maxLength ? cleaned : nil
@@ -179,13 +181,33 @@ extension TextHeuristics {
                 t = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        if let colon = t.firstIndex(of: ":"), t[..<colon].count <= 60 {
-            let lead = t[..<colon].lowercased()
-            if !lead.contains("\n"), ["here is", "here's", "voici", "voilà"].contains(where: lead.hasPrefix) {
-                t = String(t[t.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+        return stripModelWrapping(strippingPreamble(t))
+    }
+
+    private static let preambleOpeners = ["here is", "here's", "here’s", "voici", "voilà", "voila"]
+    private static let preambleInterjections = ["sure", "certainly", "of course", "absolutely", "okay", "ok",
+                                                "bien sûr", "d'accord", "d’accord", "très bien", "avec plaisir"]
+
+    /// Drops a lead-in up to its colon: "Here is the rewritten text:", "Sure!
+    /// Here's…:", "Bien sûr, voici le texte :", or an interjection followed by a
+    /// line of its own ending with a colon ("Certainly, I made it formal:⏎").
+    static func strippingPreamble(_ text: String) -> String {
+        guard let colon = text.firstIndex(of: ":"), text[..<colon].count <= 80 else { return text }
+        let lead = text[..<colon].lowercased()
+        guard !lead.contains("\n") else { return text }
+        var rest = Substring(lead)
+        var interjected = false
+        for word in preambleInterjections where rest.hasPrefix(word) {
+            let after = rest.dropFirst(word.count)
+            guard let mark = after.first, "!,.".contains(mark) else { continue }
+            rest = after.dropFirst().drop(while: \.isWhitespace)
+            interjected = true
+            break
         }
-        return stripModelWrapping(t)
+        let after = text[text.index(after: colon)...]
+        let endsLine = after.first(where: { !$0.isWhitespace || $0.isNewline })?.isNewline ?? true
+        guard preambleOpeners.contains(where: rest.hasPrefix) || (interjected && endsLine) else { return text }
+        return after.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// ISO code of the dominant language of `text`, nil when unsure.
