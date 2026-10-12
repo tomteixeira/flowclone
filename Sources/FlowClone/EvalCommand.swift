@@ -37,7 +37,7 @@ enum EvalCommand {
         guard let model = textModel(named: engine) else { return fail("unknown engine: \(engine)") }
         let cases: [EvalCase]
         do {
-            cases = try EvalCase.decodeJSONL(String(contentsOfFile: corpusPath, encoding: .utf8))
+            cases = try EvalCase.decodeCorpus(String(contentsOfFile: corpusPath, encoding: .utf8))
         } catch {
             return fail("can't read corpus \(corpusPath): \(error)")
         }
