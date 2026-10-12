@@ -26,6 +26,27 @@ If you pick Fn and it opens the emoji picker, switches input source or starts sy
 System Settings → Keyboard → "Press 🌐 key to" → **Do Nothing**.
 Builds are signed with a requirement pinned to the bundle identifier, so permissions survive rebuilds.
 
+## Evaluating the formatting step
+```sh
+swift build && .build/debug/FlowClone --eval eval/formatting-corpus.jsonl --engine apple --out eval-apple.jsonl
+```
+Runs every case of a corpus (JSONL) through the FlowCore formatting module with one model, writes one JSON
+record per case (`input`, `output` as pasted, verbatim `modelOutput`, `model`, `outcome`, `latencyMs`, `failures`)
+and prints p50/p95 latency, load time (a first warm-up call), peak memory of the process (Apple's model runs
+out of process, so only in-process models show up there), guard pass rate and rule-check failures. Per-case
+progress goes to stderr. `--engine` takes `apple` for now; any `TextModel` can be added in `EvalCommand.textModel`.
+
+A corpus line needs `id` and `raw`; `language`, `category` (`email`, `chat`, `code`, `document`, `other`),
+`beforeCursor`, `tags` and `expect` are optional. `expect` holds `contains` (case-sensitive substrings),
+`notContains` (case-insensitive, whole words) and `endsWith`. Rule checks judge the model's own output when there
+is one, even if the guards rejected it: `guards_rejected`, `model_error`, `model_unavailable`, `answered_question`
+(a dictated question lost its `?`), `language_changed` (French/English detection on 4+ words) and `expect_*`.
+
+`eval/formatting-corpus.jsonl` holds 80 hand-written cases (40 French, 40 English: fillers, self-corrections,
+questions, command-like dictations, emails, chat, code, proper nouns, very short inputs).
+`eval/baselines/` holds the Apple baseline (`apple.jsonl`, `apple.summary.txt`). Judge an output file
+qualitatively by asking Claude Code to read it in a session.
+
 ## How it maps to Wispr Flow
 | Stage | Wispr Flow | FlowClone |
 |---|---|---|

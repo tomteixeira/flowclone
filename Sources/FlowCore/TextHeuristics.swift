@@ -116,6 +116,14 @@ public enum TextHeuristics {
             t = String(t.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if t.count >= 2, t.first == "\"", t.last == "\"" { t = String(t.dropFirst().dropLast()) }
+        // The whole output inside one tag, e.g. "<after_cursor>...</after_cursor>".
+        let tagged = try! Regex(#"<([A-Za-z_]+)>(.*)</\1>"#, as: (Substring, Substring, Substring).self)
+        if let match = t.wholeMatch(of: tagged.dotMatchesNewlines()) {
+            let (_, tag, inner) = match.output
+            if !inner.contains("<\(tag)>"), !inner.contains("</\(tag)>") {
+                t = inner.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
         return t
     }
 

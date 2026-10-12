@@ -47,6 +47,16 @@ final class TextHeuristicsTests: XCTestCase {
         XCTAssertEqual(TextHeuristics.stripModelWrapping("  Hello.  "), "Hello.")
     }
 
+    // Seen from Apple's model on the eval corpus: the whole output wrapped in an invented tag.
+    func testStripsTagWrappingTheWholeOutput() {
+        XCTAssertEqual(TextHeuristics.stripModelWrapping("<after_cursor>\nPlease translate this paragraph.\n</after_cursor>"),
+                       "Please translate this paragraph.")
+        XCTAssertEqual(TextHeuristics.stripModelWrapping("<dictation>Hello there.</dictation>"), "Hello there.")
+        // Mismatched or partial tags are content, not wrapping.
+        XCTAssertEqual(TextHeuristics.stripModelWrapping("<b>Hello</b> world"), "<b>Hello</b> world")
+        XCTAssertEqual(TextHeuristics.stripModelWrapping("<div>a</div><div>b</div>"), "<div>a</div><div>b</div>")
+    }
+
     func testLeadingSpace() {
         XCTAssertEqual(TextHeuristics.withLeadingSpaceIfNeeded("world", before: "hello"), " world")
         XCTAssertEqual(TextHeuristics.withLeadingSpaceIfNeeded("world", before: "hello "), "world")
