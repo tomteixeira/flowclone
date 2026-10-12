@@ -62,23 +62,31 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Wispr debounces accidental taps (DICTATION_DEBOUNCE_DELAY).
     private let minimumHold: TimeInterval = 0.3
     private let appleModel = AppleTextModel()
-    /// `FLOWCLONE_LLM`: forces one formatting model, bypassing the Formatting menu.
+    /// `FLOWCLONE_LLM`: forces one language model (or none) for formatting and
+    /// Command Mode, bypassing the Formatting menu.
     private let llmOverride: LanguageModelOverride? = {
         do { return try TextModels.override() } catch {
             log.error("\(String(describing: error), privacy: .public)")
             return nil
         }
     }()
-    /// Local models: download at launch, load on key-down, unload when idle.
-    private lazy var localModels = LocalModelManager(specs: [formattingSpec])
+    /// Which local model formatting and Command Mode each use.
+    private lazy var localPlan = LocalModelPlan(override: llmOverride)
+    /// Local models: download at launch (1.7B, then 4B), load on key-down
+    /// (formatting) or Shift (Command Mode), unload each when idle.
+    private lazy var localModels = LocalModelManager(specs: localPlan.downloads, policy: localPlan.policy(for:))
     private let textModelLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let commandModelLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     /// Opt-in, off by default: log each formatting and Command Mode run locally.
     private var journalEnabled: Bool {
         get { defaults.bool(forKey: "journal") }
         set { defaults.set(newValue, forKey: "journal") }
     }
-    /// Command Mode cascade, best first. Qwen 4B goes in front once it ships (ticket 08).
-    private var commandModels: [any TextModel] { [appleModel] }
+    /// Command Mode cascade, best first: Qwen 4B, then Apple. A local model that
+    /// isn't loaded (or about to be) reports itself unavailable.
+    private var commandModels: [any TextModel] {
+        localPlan.commandCandidates(local: localPlan.command.flatMap { localModels.model(for: $0) }, apple: appleModel)
+    }
     private var languages: [String] {
         get {
             if let saved = defaults.stringArray(forKey: "languages") { return saved }
@@ -107,7 +115,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .loading
         setStatus("Preparing speech model…")
 
-        hotkey.onPress = { [weak self] in Task { @MainActor in self?.keyDown() } }
+        hotkey.onPress = { [weak self] mode in Task { @MainActor in self?.keyDown(mode: mode) } }
         hotkey.onModeChanged = { [weak self] mode in Task { @MainActor in self?.modeChanged(mode) } }
         hotkey.onRelease = { [weak self] mode in Task { @MainActor in await self?.keyUp(mode: mode) } }
         hotkey.onInterrupt = { [weak self] in Task { @MainActor in await self?.shortcutInterrupted() } }
@@ -204,7 +212,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     // MARK: Pipeline
 
-    private func keyDown() {
+    private func keyDown(mode: SessionMode) {
         log.info("hotkey down (state: \(String(describing: self.state), privacy: .public))")
         setup.hotkeySeen = true
         guard state == .idle, let session = makeSession() else {
@@ -217,7 +225,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         pressedAt = Date()
         hud.model.commandMode = false
         state = .recording
-        preloadFormattingModel()
+        // With Shift already held this is Command Mode: `modeChanged` loads its model instead.
+        if mode == .dictation { preloadFormattingModel() }
         // Delay the start sound so quick shortcuts using the hotkey (⌘C) stay silent.
         Task {
             try? await Task.sleep(for: .seconds(minimumHold))
@@ -246,6 +255,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
         log.info("session mode: \(String(describing: mode), privacy: .public)")
         hud.model.commandMode = mode == .command
+        if mode == .command, let spec = localPlan.command { localModels.prepare(spec) }
     }
 
     private func keyUp(mode: SessionMode) async {
@@ -451,6 +461,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(engineLine)
         textModelLine.isEnabled = false
         menu.addItem(textModelLine)
+        commandModelLine.isEnabled = false
+        if let command = localPlan.command, command != formattingSpec { menu.addItem(commandModelLine) }
         menu.addItem(.separator())
 
         let languageMenu = NSMenu()
@@ -599,8 +611,7 @@ extension AppController {
     }
 
     private var formattingSpec: LocalModelSpec {
-        if case .local(let spec) = llmOverride { return spec }
-        return LocalModels.formatting
+        localPlan.formatting ?? LocalModels.formatting
     }
 
     /// Cascade order for this dictation. A local model that isn't loaded (or about
@@ -636,6 +647,11 @@ extension AppController {
             : String(formattingSpec.id.split(separator: "/").last ?? "")
         let text = localModels.statusText(for: formattingSpec, name: name)
         textModelLine.title = text
+        if let command = localPlan.command, command != formattingSpec {
+            let name = command == LocalModels.commandMode ? "Qwen3 4B" : String(command.id.split(separator: "/").last ?? "")
+            commandModelLine.title = localModels.statusText(for: command, name: "Command Mode \(name)",
+                                                            loadsWhen: "you hold Shift")
+        }
         setup.textModelStatus = text
         setup.textModelReady = switch localModels.model(for: formattingSpec)?.state?.phase {
         case .downloaded?, .loading?, .loaded?: true
