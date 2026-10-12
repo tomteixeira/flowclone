@@ -61,6 +61,22 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case outputRejected
 }
 
+extension CommandFailure {
+    /// What the HUD says. `localModel`: where the Command Mode local model is,
+    /// nil when none is used. With no model to run, a model still on its way
+    /// explains why nothing happened.
+    public func message(localModel: LocalModelPhase?) -> String {
+        switch (self, localModel) {
+        case (.emptyInstruction, _): "Didn't catch that"
+        case (.outputRejected, _): "Command Mode couldn't produce usable text"
+        case (.noModelAvailable, .notDownloaded?), (.noModelAvailable, .downloading?),
+             (.noModelAvailable, .downloadFailed?): "Model downloading…"
+        case (.noModelAvailable, .loading?): "Model loading…"
+        case (.noModelAvailable, _): "No model available for Command Mode"
+        }
+    }
+}
+
 extension LanguageTasks {
     /// Characters of context sent on each side of the selection.
     static let commandContextLength = 300

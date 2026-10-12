@@ -59,6 +59,22 @@ final class CommandModeTests: XCTestCase {
         XCTAssertEqual(qwen.calls, 0)
     }
 
+    // MARK: HUD message on failure
+
+    func testNoModelWhileTheLocalModelDownloadsSaysSo() {
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .downloading(0.3)), "Model downloading…")
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .notDownloaded), "Model downloading…")
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .downloadFailed("offline")), "Model downloading…")
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .loading(since: Date())), "Model loading…")
+    }
+
+    func testNoModelWithNothingInProgressKeepsTheGenericMessage() {
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: nil), "No model available for Command Mode")
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .downloaded), "No model available for Command Mode")
+        XCTAssertEqual(CommandFailure.outputRejected.message(localModel: .downloading(0.3)),
+                       "Command Mode couldn't produce usable text")
+    }
+
     func testEmptyInstructionFailsWithoutCallingModel() async {
         let model = FakeTextModel("apple", reply: .text("Anything."))
         let r3 = await LanguageTasks.command(request("  "), models: [model])

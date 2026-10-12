@@ -357,11 +357,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             // With a selection it is still active, so ⌘V replaces it (and ⌘Z undoes it).
             paste(result.text)
         case .failure(let failure):
-            let message = switch failure {
-            case .noModelAvailable: "No model available for Command Mode"
-            case .outputRejected: "Command Mode couldn't produce usable text"
-            case .emptyInstruction: "Didn't catch that"
-            }
+            let localModel = localPlan.command.flatMap { localModels.model(for: $0)?.state?.phase }
+            let message = failure.message(localModel: localModel)
             log.info("command failed: \(String(describing: failure), privacy: .public)")
             state = .idle
             setStatus(message)
