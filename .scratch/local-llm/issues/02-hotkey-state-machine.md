@@ -6,9 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] State machine lives in FlowCore with no AppKit/CoreGraphics dependency (plain keycode and flag bits)
-- [ ] Supports the three push-to-talk keys (Right Command, Right Option, Fn) with right/left told apart as today
-- [ ] Tests: press then release gives `press`, `release`; keyDown while held gives `interrupt` and no `release`; another modifier while held gives `interrupt`; repeated flagsChanged with no state change emits nothing
-- [ ] `HotkeyMonitor` forwards events to the state machine and maps its outputs to the existing callbacks
+- [x] State machine lives in FlowCore with no AppKit/CoreGraphics dependency (plain keycode and flag bits)
+- [x] Supports the three push-to-talk keys (Right Command, Right Option, Fn) with right/left told apart as today
+- [x] Tests: press then release gives `press`, `release`; keyDown while held gives `interrupt` and no `release`; another modifier while held gives `interrupt`; repeated flagsChanged with no state change emits nothing
+- [x] `HotkeyMonitor` forwards events to the state machine and maps its outputs to the existing callbacks
 - [ ] Manual check: dictation and ⌘C-cancels-recording still work in the app
-- [ ] `swift test` passes
+- [x] `swift test` passes
