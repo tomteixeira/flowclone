@@ -74,13 +74,14 @@ selection, reply using the surrounding text); baselines are `eval/baselines/comm
 ## How it maps to Wispr Flow
 | Stage | Wispr Flow | FlowClone |
 |---|---|---|
-| Hotkey | CGEventTap in Swift helper → `KeypressEvent` | `HotkeyMonitor` (CGEventTap, flagsChanged + keyDown) |
+| Hotkey | CGEventTap in Swift helper → `KeypressEvent` | `HotkeyMonitor` (CGEventTap, flagsChanged + keyDown) feeding `HotkeyStateMachine` (FlowCore: press, Shift → Command Mode, release, shortcut interrupt) |
 | Context | AX `TextBoxInfo` / `AppInfoUpdate` | `FocusContext` (AX focused element, before/selected/after) |
 | Vocabulary | `DynamicVocabulary` from screen text | `TextHeuristics.vocabulary` → `AnalysisContext.contextualStrings` |
 | ASR | Opus → gRPC `TranscribeStream` → in-house "Canto" / external ASR | `ParakeetEngine` (default) or `WhisperEngine`, on-device |
 | Language | `selectedLanguages`: one → forced, several → detected | same, detection restricted to selected languages |
-| Vocabulary | `dictionary` = AX + OCR words + name + personal dictionary | same minus OCR: Whisper prompt tokens, or near-miss correction for Parakeet |
-| Formatting | `/llm/formatting` (fine-tuned Llama 3.1 8B) | `Formatter` (on-device model, greedy, output guards) |
+| Vocabulary | `dictionary` = AX + OCR words + name + personal dictionary | same minus OCR: Whisper prompt tokens, near-miss correction for Parakeet, and again after formatting for every engine |
+| Formatting | `/llm/formatting` (fine-tuned Llama 3.1 8B) | `LanguageTasks.format` (FlowCore: prompt, skip heuristic, output guards, vocabulary correction) over a cascade of on-device models: Apple's foundation model, then Qwen3 1.7B (MLX); raw transcript if none |
+| Command Mode | `/llm/command_mode` (`full_text`, `selected_text`, `instruction`) | Shift + push-to-talk → `LanguageTasks.command` (FlowCore) over Qwen3 4B (MLX), then Apple's model; replaces the selection or inserts at the cursor, HUD message and no paste on failure |
 | Insert | lazy pasteboard + ⌘V + success detection + restore | `Paster` (same technique) |
 
 ## Test
