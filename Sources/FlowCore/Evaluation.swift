@@ -126,10 +126,19 @@ public struct EvalCase: Codable, Sendable, Equatable {
 
     /// One case per non-empty line.
     public static func decodeJSONL(_ text: String) throws -> [EvalCase] {
-        let decoder = JSONDecoder()
-        return try text.split(whereSeparator: \.isNewline)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { try decoder.decode(EvalCase.self, from: Data($0.utf8)) }
+        try JSONL.lines(text).map(decode)
+    }
+
+    static func decode(_ line: Substring) throws -> EvalCase {
+        try JSONDecoder().decode(EvalCase.self, from: Data(line.utf8))
+    }
+}
+
+/// JSON Lines, as corpora and the journal are written: one value per line.
+enum JSONL {
+    /// The non-blank lines.
+    static func lines(_ text: String) -> [Substring] {
+        text.split(whereSeparator: \.isNewline).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 }
 

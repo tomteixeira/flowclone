@@ -127,17 +127,13 @@ public enum JournalRecord: Codable, Sendable, Equatable {
 
     /// One record per non-empty line.
     public static func decodeJSONL(_ text: String) throws -> [JournalRecord] {
-        try lines(text).map(decode)
+        try JSONL.lines(text).map(decode)
     }
 
     static func decode(_ line: Substring) throws -> JournalRecord {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .millisecondsSince1970
         return try decoder.decode(JournalRecord.self, from: Data(line.utf8))
-    }
-
-    static func lines(_ text: String) -> [Substring] {
-        text.split(whereSeparator: \.isNewline).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 
     // MARK: Replaying in the evaluation
@@ -170,9 +166,9 @@ extension EvalCase {
     /// A corpus file: hand-written cases and journal records, one per line, in
     /// any mix. A line with a `kind` key is a journal record.
     public static func decodeCorpus(_ text: String) throws -> [EvalCase] {
-        try JournalRecord.lines(text).map { line in
+        try JSONL.lines(text).map { line in
             if line.contains(#""kind""#), let record = try? JournalRecord.decode(line) { return record.evalCase }
-            return try JSONDecoder().decode(EvalCase.self, from: Data(line.utf8))
+            return try EvalCase.decode(line)
         }
     }
 }
