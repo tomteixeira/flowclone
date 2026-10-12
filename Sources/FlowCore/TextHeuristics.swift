@@ -111,6 +111,11 @@ public enum TextHeuristics {
     /// Strip wrapping the model sometimes adds ("Here is the cleaned text: ...", quotes).
     public static func stripModelWrapping(_ text: String) -> String {
         var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Qwen3 reasoning: thinking is disabled in the chat template, this is the safety net.
+        if t.hasPrefix("<think>") {
+            guard let end = t.range(of: "</think>") else { return "" }  // cut off mid-thought
+            t = String(t[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         for prefix in ["Here is the cleaned text:", "Here's the cleaned text:", "Cleaned text:", "Output:"]
         where t.lowercased().hasPrefix(prefix.lowercased()) {
             t = String(t.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)

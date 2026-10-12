@@ -4,7 +4,8 @@ import AVFoundation
 
 // Developer check, no UI or permissions needed:
 //   FlowClone --transcribe <audio file> [fr,en] [Vocab,Words]   → real ASR + cleanup pipeline
-//   (FLOWCLONE_ENGINE=whisper to test Whisper instead of Parakeet)
+//   (FLOWCLONE_ENGINE=whisper to test Whisper instead of Parakeet;
+//    FLOWCLONE_LLM=qwen3-1.7b, apple, off or any MLX repo id to force the cleanup model)
 if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < CommandLine.arguments.count {
     let path = CommandLine.arguments[i + 1]
     let languages = i + 2 < CommandLine.arguments.count ? CommandLine.arguments[i + 2].split(separator: ",").map(String.init) : ["fr", "en"]
@@ -21,8 +22,21 @@ if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < Command
             print("[\(transcript.language ?? "?")] \(String(format: "%.2f", Date().timeIntervalSince(start)))s RAW: \(transcript.text)")
             let request = FormattingRequest(raw: transcript.text, language: transcript.language,
                                             category: .other, beforeCursor: "")
-            let cleaned = await LanguageTasks.format(request, models: FormattingEngine.apple.candidates(local: nil, apple: AppleTextModel()))
-            print("CLEAN: \(cleaned.text)")
+            // FLOWCLONE_LLM forces one model (no cascade); default is Apple's.
+            let models: [any TextModel]
+            if let choice = try TextModels.override() {
+                models = TextModels.make(choice).map { [$0] } ?? []
+                if let mlx = models.first as? MLXTextModel {
+                    let loadStart = Date()
+                    try await mlx.load { FileHandle.standardError.write("llm: downloading \(Int($0 * 100))%\n".data(using: .utf8)!) }
+                    print("LLM \(mlx.id) loaded in \(String(format: "%.2f", Date().timeIntervalSince(loadStart)))s")
+                }
+            } else {
+                models = FormattingEngine.apple.candidates(local: nil, apple: AppleTextModel())
+            }
+            let formatStart = Date()
+            let cleaned = await LanguageTasks.format(request, models: models)
+            print("[\(cleaned.modelID ?? "raw")] \(String(format: "%.2f", Date().timeIntervalSince(formatStart)))s CLEAN: \(cleaned.text)")
             exit(0)
         } catch {
             print("error: \(error)")
