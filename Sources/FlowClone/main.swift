@@ -32,6 +32,12 @@ if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < Command
     RunLoop.main.run()
 }
 
+//   FlowClone --eval <corpus.jsonl> [--engine apple] [--out <file.jsonl>]   → formatting evaluation
+if CommandLine.arguments.contains("--eval") {
+    Task { @MainActor in exit(await EvalCommand.run(arguments: CommandLine.arguments)) }
+    RunLoop.main.run()
+}
+
 func loadSamples(_ path: String) throws -> [Float] {
     let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
     let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
