@@ -20,11 +20,11 @@ final class LocalModelManager {
     private var started = false
     private var idleTimer: Timer?
 
-    init(specs: [LocalModelSpec], policy: ResidencyPolicy = .standard) {
+    init(specs: [LocalModelSpec], policy: (LocalModelSpec) -> ResidencyPolicy = { _ in .standard }) {
         var seen = Set<LocalModelSpec>()
         let unique = specs.filter { seen.insert($0).inserted }
         let relay = relay
-        models = unique.map { MLXTextModel($0, policy: policy, onChange: { Task { @MainActor in relay.handler?() } }) }
+        models = unique.map { MLXTextModel($0, policy: policy($0), onChange: { Task { @MainActor in relay.handler?() } }) }
     }
 
     /// Lets the models, created before `self` exists, reach `onChange`.
@@ -64,7 +64,9 @@ final class LocalModelManager {
     }
 
     /// Starts loading `spec` in the background if it's on disk and not in memory.
-    /// Called on push-to-talk key-down so loading overlaps with the recording.
+    /// Called on push-to-talk key-down (formatting model) or when Shift switches
+    /// the session to Command Mode (Command Mode model), so loading overlaps
+    /// with the recording.
     func prepare(_ spec: LocalModelSpec) {
         guard let model = model(for: spec), model.state?.canLoad == true else { return }
         Task {
@@ -85,13 +87,13 @@ final class LocalModelManager {
     }
 
     /// One line for the menu and the setup window.
-    func statusText(for spec: LocalModelSpec, name: String) -> String {
+    func statusText(for spec: LocalModelSpec, name: String, loadsWhen: String = "you dictate") -> String {
         guard let phase = model(for: spec)?.state?.phase else { return "\(name): not used" }
         return switch phase {
         case .notDownloaded: "\(name): waiting to download"
         case .downloading(let p): "\(name): downloading \(Int(p * 100))% (once)"
         case .downloadFailed(let message): "\(name): download failed (\(message)), retrying"
-        case .downloaded: "\(name): ready (loads when you dictate)"
+        case .downloaded: "\(name): ready (loads when \(loadsWhen))"
         case .loading: "\(name): loading…"
         case .loaded: "\(name): loaded"
         }

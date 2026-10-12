@@ -20,6 +20,15 @@ public struct ResidencyPolicy: Sendable, Equatable {
     /// target (400 ms) plus slack; a 1.7B load with warm-up takes a few seconds,
     /// so only a load started early in the hold (at key-down) is waited for.
     public static let standard = ResidencyPolicy(idleTimeout: 15 * 60, waitBudget: 0.75, assumedLoadDuration: 4)
+
+    /// The Command Mode model (Qwen 4B). Its load only starts at Shift, often
+    /// seconds into the hold, so it is usually still loading at release. Command
+    /// Mode has no 400 ms target (generation alone takes a second or more) and
+    /// Qwen 4B is the better model, so a load expected to finish within 4 s is
+    /// waited for; a longer one (Shift pressed just before release, a cold disk)
+    /// falls through to Apple's model. The 4B has ~2.3× the 1.7B's weights
+    /// (3.1 s measured), hence ~6 s assumed until this Mac has measured one.
+    public static let commandMode = ResidencyPolicy(idleTimeout: 15 * 60, waitBudget: 4, assumedLoadDuration: 6)
 }
 
 /// Backoff between attempts of a failed model download (which resumes where it stopped).
