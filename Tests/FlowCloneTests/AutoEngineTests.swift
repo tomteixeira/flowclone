@@ -280,6 +280,36 @@ final class LocalModelPlanTests: XCTestCase {
         XCTAssertEqual(LocalModelPlan(override: nil).commandCandidates(local: nil, apple: apple).map(\.id), ["apple"])
     }
 
+    func testFormattingFollowsTheSettingWithoutOverride() {
+        let qwen = FakeTextModel("qwen", reply: .text("x"))
+        let apple = FakeTextModel("apple", reply: .text("x"))
+        let plan = LocalModelPlan(override: nil)
+        XCTAssertEqual(plan.formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), ["apple", "qwen"])
+        XCTAssertEqual(plan.formattingCandidates(engine: .apple, local: qwen, apple: apple).map(\.id), ["apple"])
+        XCTAssertEqual(plan.formattingCandidates(engine: .off, local: qwen, apple: apple).map(\.id), [])
+    }
+
+    func testOverridesForceTheFormattingCascadeWhateverTheSetting() {
+        let qwen = FakeTextModel("qwen", reply: .text("x"))
+        let apple = FakeTextModel("apple", reply: .text("x"))
+        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.formatting))
+            .formattingCandidates(engine: .off, local: qwen, apple: apple).map(\.id), ["qwen"])
+        XCTAssertEqual(LocalModelPlan(override: .apple)
+            .formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), ["apple"])
+        XCTAssertEqual(LocalModelPlan(override: .off)
+            .formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), [])
+    }
+
+    func testKeyDownPreloadsTheFormattingModelOnlyWhenTheCascadeWouldReachIt() {
+        let plan = LocalModelPlan(override: nil)
+        XCTAssertFalse(plan.preloadsFormattingModel(engine: .auto, appleAvailable: true))
+        XCTAssertTrue(plan.preloadsFormattingModel(engine: .auto, appleAvailable: false))
+        XCTAssertFalse(plan.preloadsFormattingModel(engine: .apple, appleAvailable: false))
+        XCTAssertTrue(LocalModelPlan(override: .local(LocalModels.formatting))
+            .preloadsFormattingModel(engine: .off, appleAvailable: true))
+        XCTAssertFalse(LocalModelPlan(override: .apple).preloadsFormattingModel(engine: .auto, appleAvailable: false))
+    }
+
     func testTheCommandModelIsTheLastResortOnlyWhenAppleCantTakeOver() {
         XCTAssertTrue(LocalModelPlan(override: nil).commandModelIsLastResort(appleAvailable: false))
         XCTAssertFalse(LocalModelPlan(override: nil).commandModelIsLastResort(appleAvailable: true))

@@ -6,8 +6,8 @@ public enum ModelSource: String, Sendable, CaseIterable {
     case local, apple
 }
 
-/// The user's formatting-engine setting, resolved into the ordered list of
-/// candidate models `LanguageTasks.format` cascades over.
+/// The user's formatting-engine setting: the order `LanguageTasks.format`
+/// cascades over models in (`LocalModelPlan.formattingCandidates` resolves it).
 public enum FormattingEngine: String, Sendable, CaseIterable {
     /// The best model available, falling back to the other one.
     case auto
@@ -48,13 +48,4 @@ public enum FormattingEngine: String, Sendable, CaseIterable {
         return order[..<index].allSatisfy { $0 == .apple && !appleAvailable }
     }
 
-    /// Candidates in cascade order. Pass nil for a model that isn't installed.
-    public func candidates(local: (any TextModel)?, apple: (any TextModel)?) -> [any TextModel] {
-        order.compactMap { source in
-            switch source {
-            case .local: local
-            case .apple: apple
-            }
-        }
-    }
 }

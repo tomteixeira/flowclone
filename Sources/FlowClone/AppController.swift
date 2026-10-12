@@ -648,13 +648,7 @@ extension AppController {
     /// Cascade order for this dictation. A local model that isn't loaded (or about
     /// to be) reports itself unavailable, so the cascade moves on without waiting.
     private var formattingModels: [any TextModel] {
-        let local = localModels.model(for: formattingSpec)
-        switch llmOverride {
-        case .apple?: return [appleModel]
-        case .off?: return []
-        case .local?: return local.map { [$0] } ?? []
-        case nil: return formattingEngine.candidates(local: local, apple: appleModel)
-        }
+        localPlan.formattingCandidates(engine: formattingEngine, local: localModels.model(for: formattingSpec), apple: appleModel)
     }
 
     private func startLocalModels() {
@@ -665,12 +659,9 @@ extension AppController {
 
     /// Key-down: start loading the formatting model so it overlaps with the recording.
     private func preloadFormattingModel() {
-        let needed = switch llmOverride {
-        case .local?: true
-        case .apple?, .off?: false
-        case nil: formattingEngine.preloadsLocal(appleAvailable: appleModel.isAvailable)
+        if localPlan.preloadsFormattingModel(engine: formattingEngine, appleAvailable: appleModel.isAvailable) {
+            localModels.prepare(formattingSpec)
         }
-        if needed { localModels.prepare(formattingSpec) }
     }
 
     private func textModelChanged() {

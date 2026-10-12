@@ -3,7 +3,7 @@ import Foundation
 /// Everything FlowClone asks of a language model, behind the `TextModel` seam.
 /// Each task (formatting today, Command Mode next) owns its prompt, its output
 /// guards and the fallback cascade over an ordered list of candidate models,
-/// usually resolved by `FormattingEngine.candidates(local:apple:)`.
+/// usually resolved by `LocalModelPlan`.
 public enum LanguageTasks {
     /// Try each available model in order; the first output `accept` maps to a
     /// non-nil value wins. Unavailable, throwing or rejected models fall through.

@@ -153,7 +153,7 @@ final class FormattingTests: XCTestCase {
     func testOffNeverCallsAModel() async {
         let local = FakeTextModel("qwen", reply: .text("Can you send me the report by Friday?"))
         let apple = FakeTextModel("apple", reply: .text("Can you send me the report by Friday?"))
-        let models = FormattingEngine.off.candidates(local: local, apple: apple)
+        let models = LocalModelPlan(override: nil).formattingCandidates(engine: .off, local: local, apple: apple)
         let result = await LanguageTasks.format(request(raw), models: models)
         XCTAssertEqual(result, FormattingResult(text: raw, modelID: nil))
         XCTAssertEqual(local.calls + apple.calls, 0)
@@ -162,7 +162,7 @@ final class FormattingTests: XCTestCase {
     func testAppleUsesOnlyTheAppleModel() async {
         let local = FakeTextModel("qwen", reply: .text("Can you send me the report by Friday?"))
         let apple = FakeTextModel("apple", reply: .error)
-        let models = FormattingEngine.apple.candidates(local: local, apple: apple)
+        let models = LocalModelPlan(override: nil).formattingCandidates(engine: .apple, local: local, apple: apple)
         let result = await LanguageTasks.format(request(raw), models: models)
         XCTAssertEqual(result, FormattingResult(text: raw, modelID: nil))
         XCTAssertEqual(local.calls, 0)
@@ -171,8 +171,8 @@ final class FormattingTests: XCTestCase {
     func testAutoOffersEveryInstalledModel() async {
         let local = FakeTextModel("qwen", available: false, reply: .text("Never used."))
         let apple = FakeTextModel("apple", available: false, reply: .text("Never used."))
-        XCTAssertEqual(FormattingEngine.auto.candidates(local: local, apple: apple).map(\.id).sorted(), ["apple", "qwen"])
+        XCTAssertEqual(LocalModelPlan(override: nil).formattingCandidates(engine: .auto, local: local, apple: apple).map(\.id).sorted(), ["apple", "qwen"])
         // While the local model isn't installed yet, auto is just Apple.
-        XCTAssertEqual(FormattingEngine.auto.candidates(local: nil, apple: apple).map(\.id), ["apple"])
+        XCTAssertEqual(LocalModelPlan(override: nil).formattingCandidates(engine: .auto, local: nil, apple: apple).map(\.id), ["apple"])
     }
 }
