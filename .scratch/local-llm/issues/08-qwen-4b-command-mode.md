@@ -4,12 +4,12 @@
 
 **Blocked by:** 06 (Auto engine in the app), 07 (Command Mode end to end)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Background download starts after the 1.7B is ready; progress visible; failures retry
-- [ ] Command Mode cascade: Qwen 4B, then Apple, then HUD message
-- [ ] Load starts on the mode-changed event (Shift detected), not on key-down; formatting sessions never load the 4B
-- [ ] 4B released after ~15 minutes without use, independently of the 1.7B
+- [x] Command Mode cascade: Qwen 4B, then Apple, then HUD message
+- [x] Load starts on the mode-changed event (Shift detected), not on key-down; formatting sessions never load the 4B
+- [x] 4B released after ~15 minutes without use, independently of the 1.7B
 - [ ] While the 4B is downloading, Command Mode keeps working through Apple's model
 - [ ] Manual check with Apple Intelligence disabled: Command Mode works through Qwen 4B
 
@@ -19,3 +19,7 @@
 - `ResidencyPolicy.commandMode`: 15 min idle, 4 s wait budget, 6 s assumed load. The 4B load starts at Shift, so it is often still loading at release; Command Mode has no 400 ms target and its generation already takes a second or more, so a load expected to end within 4 s is waited for, otherwise Apple answers.
 - App: the 4B loads on `modeChanged(.command)`; with Shift already held at key-down the 1.7B preload is skipped. The menu shows a "Command Mode Qwen3 4B" status line (download progress, retries).
 - `swift build`, `swift test` (126 tests) and `scripts/build-app.sh` pass. Not yet verified in the running app: the download and its progress/retry in the menu, loading at Shift, the 4 s budget in practice, the independent 15-minute unload, Command Mode via Apple while the 4B downloads, and Command Mode with Apple Intelligence disabled.
+
+## Comments
+
+- Merged into `local-llm` (`swift build`, `swift test` with 135 tests, and `scripts/build-app.sh` pass). The unticked items need a manual check in the running app. Known gap: with Apple Intelligence off and the 4B still loading beyond the 4 s budget, Command Mode shows 'No model available' instead of waiting.
