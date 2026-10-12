@@ -10,9 +10,13 @@ APP="$ROOT/build/FlowClone.app"
 swift build -c release --package-path "$ROOT"
 BIN="$(swift build -c release --package-path "$ROOT" --show-bin-path)/FlowClone"
 
+LIB="$("$ROOT/scripts/build-mlx-metallib.sh")"
+
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/FlowClone"
+# MLX kernels; MLXTextModel points MLX at this copy (GPU.metallib).
+cp "$LIB" "$APP/Contents/Resources/mlx.metallib"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
 # Ad-hoc signature with a designated requirement pinned to the bundle identifier

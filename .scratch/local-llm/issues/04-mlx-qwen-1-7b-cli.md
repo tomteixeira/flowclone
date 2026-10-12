@@ -6,10 +6,10 @@
 
 **Status:** ready-for-agent
 
-- [ ] MLX Swift LLM package added; app still builds with `scripts/build-app.sh`
-- [ ] Confirm the `mlx-community` repo ids for Qwen3 1.7B and 4B (Instruct-2507 if present) and record them in the code as constants
-- [ ] MLX adapter implements `TextModel`; contains no prompt or guard logic
-- [ ] Qwen3 thinking is disabled (chat template flag or non-thinking variant); no `<think>` content ever reaches the output
-- [ ] Weights downloaded on first use to the FlowClone models directory; a second run doesn't re-download
-- [ ] `FLOWCLONE_LLM=<model id>` makes `--transcribe` and the eval harness use that MLX model
-- [ ] Demo: `--transcribe` on a French recording prints a cleaned transcript produced by Qwen 1.7B
+- [x] MLX Swift LLM package added; app still builds with `scripts/build-app.sh`
+- [x] Confirm the `mlx-community` repo ids for Qwen3 1.7B and 4B (Instruct-2507 if present) and record them in the code as constants
+- [x] MLX adapter implements `TextModel`; contains no prompt or guard logic
+- [x] Qwen3 thinking is disabled (chat template flag or non-thinking variant); no `<think>` content ever reaches the output
+- [x] Weights downloaded on first use to the FlowClone models directory; a second run doesn't re-download
+- [ ] `FLOWCLONE_LLM=<model id>` makes `--transcribe` and the eval harness use that MLX model (`--transcribe` done; eval harness to wire `TextModels.make`/`TextModels.override()` from ticket 03)
+- [x] Demo: `--transcribe` on a French recording prints a cleaned transcript produced by Qwen 1.7B

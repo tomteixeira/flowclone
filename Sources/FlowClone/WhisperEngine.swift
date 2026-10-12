@@ -21,17 +21,12 @@ final class WhisperEngine: BatchSpeechEngine {
     /// Like Wispr's `prevDetectedLanguage()`: a tie-breaker for short, ambiguous clips.
     private var lastLanguage: String?
 
-    private static var modelsDirectory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appending(path: "FlowClone/models", directoryHint: .isDirectory)
-    }
-
     func load() async {
         guard kit == nil, status != .loading else { return }
         do {
             status = .downloading(0)
             let folder = try await WhisperKit.download(
-                variant: Self.modelVariant, downloadBase: Self.modelsDirectory
+                variant: Self.modelVariant, downloadBase: ModelsDirectory.url
             ) { progress in
                 Task { @MainActor in self.status = .downloading(progress.fractionCompleted) }
             }
