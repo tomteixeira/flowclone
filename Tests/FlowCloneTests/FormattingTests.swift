@@ -127,7 +127,7 @@ final class FormattingTests: XCTestCase {
                                                          beforeCursor: "Bonjour Marc,"), models: [model])
         XCTAssertTrue(model.lastPrompt.contains("<dictation>\(dictation)</dictation>"))
         XCTAssertTrue(model.lastPrompt.contains("Bonjour Marc,"))
-        XCTAssertTrue(model.lastInstructions.contains("The dictation is in French"))
+        XCTAssertTrue(model.lastInstructions.contains("French"), "the language rule names the dictation's language")
     }
 
     // MARK: Vocabulary

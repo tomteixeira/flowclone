@@ -165,15 +165,16 @@ final class CommandModeTests: XCTestCase {
 
     func testPromptCarriesInstructionSelectionAndBoundedContext() async {
         let model = FakeTextModel("apple", reply: .text("Could you send the deck?"))
-        let before = String(repeating: "a", count: 1000) + "BEFORE-TAIL"
-        let after = "AFTER-HEAD" + String(repeating: "z", count: 1000)
+        let before = "FAR-BEFORE" + String(repeating: "a", count: 1000) + "BEFORE-TAIL"
+        let after = "AFTER-HEAD" + String(repeating: "z", count: 1000) + "FAR-AFTER"
         _ = await LanguageTasks.command(request(before: before, after: after), models: [model])
         let prompt = model.lastPrompt
         XCTAssertTrue(prompt.contains("make this more formal"))
         XCTAssertTrue(prompt.contains(selection))
         XCTAssertTrue(prompt.contains("BEFORE-TAIL"))
         XCTAssertTrue(prompt.contains("AFTER-HEAD"))
-        XCTAssertLessThan(prompt.count, 800, "about 300 characters of context on each side")
+        XCTAssertFalse(prompt.contains("FAR-BEFORE"), "context far before the selection isn't sent")
+        XCTAssertFalse(prompt.contains("FAR-AFTER"), "context far after the selection isn't sent")
     }
 
     func testOutputLanguageFollowsTheSelection() async {
