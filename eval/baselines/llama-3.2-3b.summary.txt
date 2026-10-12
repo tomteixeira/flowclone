@@ -1,0 +1,51 @@
+Llama 3.2 3B Instruct (MLX, mlx-community/Llama-3.2-3B-Instruct-4bit) on eval/formatting-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding, thinking off (enable_thinking: false).
+Prompt: same formatting prompt as the Apple baseline (with French examples, ticket 03).
+Revision: main, resolved to 7f0dc925e0d0afb0322d96f9255cfddf2ba5636e on huggingface.co (2026-10-12).
+Command: .build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine mlx-community/Llama-3.2-3B-Instruct-4bit --out eval/baselines/llama-3.2-3b.jsonl
+Latency contamination: low. No other FlowClone eval or MLX process ran during the run (checked before
+  and after); other agents' `swift build` jobs may have been running, so latency may be slightly inflated.
+
+engine: mlx-community/Llama-3.2-3B-Instruct-4bit
+output: eval/baselines/llama-3.2-3b.jsonl
+cases: 80 (accepted 66, rejected 8, skipped 6)
+latency p50: 517 ms, p95: 1191 ms
+load time: 1177 ms, peak memory: 1782 MB
+guard pass rate: 89%
+rule-check failures: 23 in 19 cases
+  guards_rejected: 8
+  expect_contains: 6
+  expect_not_contains: 6
+  expect_ends_with: 3
+
+Notes
+- Obeys instructions in the dictation: tells the joke in en-command-3 and fr-command-3, writes Swift code for
+  en-code-2, echoes "<dictation>" in en-command-2. 8 guard rejections.
+- Loses corrections: en-email-3 keeps "March" and drops "April", en-long-1 "Monday and Tuesday",
+  fr-long-1 "lundi ou mardi". Mangles French chat: fr-filler-3 "Je suis arrivé.", fr-chat-2 drops "retard";
+  drops the name in fr-email-4; drops "?" on fr-chat-4, fr-noun-2, fr-correction-5.
+- Load time and peak memory were measured after a one-case warm-up run that downloaded the weights, so
+  they come from a warm OS page cache and exclude the download. Both swing a lot run to run: a repeat of
+  Qwen3 4B gave load 2.9 s / peak 735 MB vs 0.9 s / 1946 MB in its baseline. Peak memory is ru_maxrss of
+  FlowClone, which undercounts mmapped weights; the on-disk size (COMPARISON.md) is the better residency estimate.
+
+Failing cases
+en-command-2: guards_rejected
+en-command-3: guards_rejected, expect_contains:joke
+en-email-3: expect_contains:April
+en-email-5: expect_not_contains:Hi David
+en-chat-1: guards_rejected
+en-code-2: guards_rejected, expect_contains:TODO
+en-long-1: expect_not_contains:Monday
+fr-filler-2: expect_not_contains:tu vois
+fr-filler-3: guards_rejected, expect_contains:dix minutes
+fr-correction-5: expect_not_contains:enfin, expect_ends_with:?
+fr-command-2: guards_rejected
+fr-command-3: guards_rejected
+fr-email-4: expect_contains:Julie
+fr-email-5: expect_not_contains:Bonjour David
+fr-chat-2: expect_contains:retard
+fr-chat-3: guards_rejected
+fr-chat-4: expect_ends_with:?
+fr-noun-2: expect_ends_with:?
+fr-long-1: expect_not_contains:lundi
