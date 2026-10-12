@@ -18,7 +18,7 @@ extension PushToTalkKey {
 /// Modifier-only keys produce `flagsChanged` events; `keyDown`s are watched too
 /// so that using the modifier in a shortcut (⌘C, ⌥[ …) isn't taken as dictation.
 /// Interpreting the events is `HotkeyStateMachine`'s job (FlowCore); this class
-/// only owns the tap and maps the machine's outputs to callbacks.
+/// only owns the tap and hands the machine's outputs over, in order.
 final class HotkeyMonitor {
     typealias Key = PushToTalkKey
 
@@ -26,13 +26,10 @@ final class HotkeyMonitor {
         get { machine.key }
         set { machine = HotkeyStateMachine(key: newValue) }
     }
-    /// The key went down; `.command` when Shift was already held.
-    var onPress: (SessionMode) -> Void = { _ in }
-    var onRelease: (SessionMode) -> Void = { _ in }
-    /// Shift joined the hold: the session is now Command Mode.
-    var onModeChanged: (SessionMode) -> Void = { _ in }
-    /// Another key was pressed while holding the hotkey: it's a shortcut, not dictation.
-    var onInterrupt: () -> Void = {}
+    /// The outputs of one key event, called synchronously on the main thread
+    /// (the tap's run loop source is on the main run loop), event after event,
+    /// so a press, a mode change and a release are never seen out of order.
+    var onOutputs: @MainActor ([HotkeyOutput]) -> Void = { _ in }
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -86,13 +83,7 @@ final class HotkeyMonitor {
             return
         }
         let outputs = machine.handle(keyEvent)
-        for output in outputs {
-            switch output {
-            case .press: onPress(outputs.contains(.modeChanged(.command)) ? .command : .dictation)
-            case .modeChanged(let mode): onModeChanged(mode)
-            case .release(let mode): onRelease(mode)
-            case .interrupt: onInterrupt()
-            }
-        }
+        guard !outputs.isEmpty else { return }
+        MainActor.assumeIsolated { onOutputs(outputs) }
     }
 }

@@ -115,10 +115,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .loading
         setStatus("Preparing speech model…")
 
-        hotkey.onPress = { [weak self] mode in Task { @MainActor in self?.keyDown(mode: mode) } }
-        hotkey.onModeChanged = { [weak self] mode in Task { @MainActor in self?.modeChanged(mode) } }
-        hotkey.onRelease = { [weak self] mode in Task { @MainActor in await self?.keyUp(mode: mode) } }
-        hotkey.onInterrupt = { [weak self] in Task { @MainActor in await self?.shortcutInterrupted() } }
+        hotkey.onOutputs = { [weak self] outputs in self?.handle(outputs) }
         for (name, model) in [("parakeet", parakeet), ("whisper", whisper)] as [(String, any BatchSpeechEngine)] {
             model.onStatus = { [weak self] status in
                 if case .downloading = status {} else { log.info("\(name, privacy: .public): \(String(describing: status), privacy: .public)") }
@@ -212,6 +209,20 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     // MARK: Pipeline
 
+    /// Hotkey outputs, handled synchronously and in order: every state change
+    /// happens here, before the next key event; only the slow work (stopping
+    /// the recording, transcribing, formatting) continues in a task.
+    private func handle(_ outputs: [HotkeyOutput]) {
+        for output in outputs {
+            switch output {
+            case .press(let mode): keyDown(mode: mode)
+            case .modeChanged(let mode): modeChanged(mode)
+            case .release(let mode): keyUp(mode: mode)
+            case .interrupt: shortcutInterrupted()
+            }
+        }
+    }
+
     private func keyDown(mode: SessionMode) {
         log.info("hotkey down (state: \(String(describing: self.state), privacy: .public))")
         setup.hotkeySeen = true
@@ -223,10 +234,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         // reflects the field the user was in *before* anything changes.
         context = FocusContext.capture()
         pressedAt = Date()
-        hud.model.commandMode = false
+        hud.model.commandMode = mode == .command
         state = .recording
-        // With Shift already held this is Command Mode: `modeChanged` loads its model instead.
-        if mode == .dictation { preloadFormattingModel() }
+        log.info("session mode: \(String(describing: mode), privacy: .public)")
+        preloadModel(for: mode)
         // Delay the start sound so quick shortcuts using the hotkey (⌘C) stay silent.
         Task {
             try? await Task.sleep(for: .seconds(minimumHold))
@@ -255,25 +266,41 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
         log.info("session mode: \(String(describing: mode), privacy: .public)")
         hud.model.commandMode = mode == .command
-        if mode == .command, let spec = localPlan.command { localModels.prepare(spec) }
+        preloadModel(for: mode)
     }
 
-    private func keyUp(mode: SessionMode) async {
+    /// Key-down or Shift: start loading the session's local model so it overlaps with the recording.
+    private func preloadModel(for mode: SessionMode) {
+        if mode == .command {
+            if let spec = localPlan.command { localModels.prepare(spec) }
+        } else {
+            preloadFormattingModel()
+        }
+    }
+
+    private func keyUp(mode: SessionMode) {
         let held = Date().timeIntervalSince(pressedAt)
         log.info("hotkey up after \(held, format: .fixed(precision: 2))s (state: \(String(describing: self.state), privacy: .public))")
         guard state == .recording, let session else { return }
         self.session = nil
+        // Busy until the session is stopped, so a new press waits for the microphone.
+        state = .processing
 
         if held < minimumHold {
-            await session.cancel()
-            state = .idle
             hud.show(.message("Hold the key while you speak"), autoHideAfter: 1.5)
+            Task {
+                await session.cancel()
+                state = .idle
+            }
             return
         }
 
-        state = .processing
         hud.show(.processing)
         NSSound(named: "Pop")?.play()
+        Task { await finish(session, mode: mode) }
+    }
+
+    private func finish(_ session: any DictationSession, mode: SessionMode) async {
         do {
             let started = Date()
             let transcript = try await session.finish()
@@ -361,13 +388,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     /// The hotkey was part of a shortcut (⌘C, ⌥[ …): drop the recording silently.
-    private func shortcutInterrupted() async {
+    private func shortcutInterrupted() {
         guard state == .recording, let session else { return }
         self.session = nil
-        await session.cancel()
-        state = .idle
+        state = .processing
         hud.show(.hidden)
         log.info("recording cancelled: hotkey used in a shortcut")
+        Task {
+            await session.cancel()
+            state = .idle
+        }
     }
 
     private func fail(_ message: String) async {
