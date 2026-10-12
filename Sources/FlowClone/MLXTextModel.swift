@@ -119,8 +119,9 @@ final class MLXTextModel: TextModel {
             if case .wait(let budget) = readiness {
                 // The load runs in its own task; poll rather than await it so the
                 // cascade gives up on time.
-                let deadline = Date().addingTimeInterval(budget)
-                while residency.withLock({ $0.phase }) != .loaded, Date() < deadline, !Task.isCancelled {
+                let clock = ContinuousClock()
+                let deadline = clock.now.advanced(by: .seconds(budget))
+                while residency.withLock({ $0.phase }) != .loaded, clock.now < deadline, !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(20))
                 }
                 if residency.withLock({ $0.phase }) != .loaded {
