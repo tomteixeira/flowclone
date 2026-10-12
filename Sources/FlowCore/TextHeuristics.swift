@@ -108,6 +108,10 @@ public enum TextHeuristics {
         return phantoms.contains(t.lowercased()) ? "" : t
     }
 
+    /// One tag around the whole text, its name captured and reused for the closing tag.
+    nonisolated(unsafe) private static let wholeTagged =
+        try! Regex(#"<([A-Za-z_]+)>(.*)</\1>"#, as: (Substring, Substring, Substring).self).dotMatchesNewlines()
+
     /// Strip wrapping the model sometimes adds ("Here is the cleaned text: ...", quotes).
     public static func stripModelWrapping(_ text: String) -> String {
         var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -122,8 +126,7 @@ public enum TextHeuristics {
         }
         if t.count >= 2, t.first == "\"", t.last == "\"" { t = String(t.dropFirst().dropLast()) }
         // The whole output inside one tag, e.g. "<after_cursor>...</after_cursor>".
-        let tagged = try! Regex(#"<([A-Za-z_]+)>(.*)</\1>"#, as: (Substring, Substring, Substring).self)
-        if let match = t.wholeMatch(of: tagged.dotMatchesNewlines()) {
+        if let match = t.wholeMatch(of: wholeTagged) {
             let (_, tag, inner) = match.output
             if !inner.contains("<\(tag)>"), !inner.contains("</\(tag)>") {
                 t = inner.trimmingCharacters(in: .whitespacesAndNewlines)
