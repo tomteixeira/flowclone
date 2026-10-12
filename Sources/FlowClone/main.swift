@@ -24,7 +24,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < Command
                                             category: .other, beforeCursor: "")
             // FLOWCLONE_LLM forces one model (no cascade); default is Apple's.
             let models: [any TextModel]
-            if let choice = try TextModels.override() {
+            if let choice = try LanguageModelOverride.fromEnvironment() {
                 models = TextModels.make(choice).map { [$0] } ?? []
                 if let mlx = models.first as? MLXTextModel {
                     let loadStart = Date()

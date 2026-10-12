@@ -295,9 +295,4 @@ enum TextModels {
         guard let choice = try LanguageModelOverride.parse(id) else { throw LanguageModelOverride.InvalidValue(value: id) }
         return make(choice)
     }
-
-    /// The `FLOWCLONE_LLM` override, nil when unset.
-    static func override() throws -> LanguageModelOverride? {
-        try LanguageModelOverride.fromEnvironment()
-    }
 }

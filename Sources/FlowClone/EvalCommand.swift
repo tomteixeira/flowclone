@@ -9,13 +9,6 @@ import Foundation
 /// Runs every case through `Evaluation` with one model, writes one JSON record
 /// per case and prints a summary. See the README, "Evaluating the formatting step".
 enum EvalCommand {
-    /// The language model the harness runs, by command-line name: "apple", an
-    /// alias ("qwen3-1.7b", "qwen3-4b") or a Hugging Face repo id (MLX).
-    /// Nil for "off" or a name the factory doesn't know.
-    static func textModel(named name: String) -> (any TextModel)? {
-        try? TextModels.make(id: name)
-    }
-
     /// `--engine`, else `FLOWCLONE_LLM`, else Apple's model.
     static func engineName(arguments: [String], environment: [String: String]) -> String {
         if let i = arguments.firstIndex(of: "--engine"), i + 1 < arguments.count { return arguments[i + 1] }
@@ -35,7 +28,13 @@ enum EvalCommand {
         let engine = engineName(arguments: arguments, environment: ProcessInfo.processInfo.environment)
         let outPath = option("--out") ?? "eval-\(engine.replacingOccurrences(of: "/", with: "_")).jsonl"
 
-        guard let model = textModel(named: engine) else { return fail("unknown engine: \(engine)") }
+        let model: any TextModel
+        do {
+            guard let made = try TextModels.make(id: engine) else { return fail("engine \(engine) runs no model") }
+            model = made
+        } catch {
+            return fail("unknown engine: \(error)")
+        }
         let cases: [EvalCase]
         do {
             cases = try EvalCase.decodeCorpus(String(contentsOfFile: corpusPath, encoding: .utf8))

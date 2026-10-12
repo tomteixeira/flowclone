@@ -65,7 +65,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// `FLOWCLONE_LLM`: forces one language model (or none) for formatting and
     /// Command Mode, bypassing the Formatting menu.
     private let llmOverride: LanguageModelOverride? = {
-        do { return try TextModels.override() } catch {
+        do { return try LanguageModelOverride.fromEnvironment() } catch {
             log.error("\(String(describing: error), privacy: .public)")
             return nil
         }
