@@ -61,7 +61,7 @@ enum EvalCommand {
             _ = try? await model.generate(instructions: "Reply with OK.", prompt: "OK",
                                           options: TextGenerationOptions(maxTokens: 4))
         }
-        let loadTime = milliseconds(clock.now - warmStart)
+        let loadTime = (clock.now - warmStart).milliseconds
 
         var records: [EvalRecord] = []
         let encoder = JSONEncoder()
@@ -92,10 +92,6 @@ enum EvalCommand {
         var usage = rusage()
         guard getrusage(RUSAGE_SELF, &usage) == 0 else { return nil }
         return UInt64(usage.ru_maxrss) // bytes on macOS
-    }
-
-    static func milliseconds(_ d: Duration) -> Double {
-        Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15
     }
 
     static func stderr(_ line: String) {

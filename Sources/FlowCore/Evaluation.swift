@@ -248,52 +248,57 @@ public enum Evaluation {
     /// Command Mode: the output is what would be pasted, empty when Command Mode
     /// gives up (it never pastes the instruction).
     static func runCommand(_ evalCase: EvalCase, model: any TextModel) async -> EvalRecord {
-        let recorder = RecordingTextModel(model)
-        let clock = ContinuousClock()
-        let start = clock.now
-        let result = await LanguageTasks.command(evalCase.commandRequest, models: [recorder])
-        let elapsed = clock.now - start
-
-        let call = recorder.call
-        let outcome: EvalOutcome
-        switch (result, call) {
-        case (.success, _): outcome = .accepted
-        case (.failure(.emptyInstruction), _): outcome = .skipped
-        case (.failure(.noModelAvailable), _): outcome = .unavailable
-        case (.failure(.outputRejected), .success?): outcome = .rejected
-        case (.failure(.outputRejected), _): outcome = .error
+        await measure(evalCase, model: model, task: { await LanguageTasks.command(evalCase.commandRequest, models: $0) },
+                      output: { (try? $0.get())?.text ?? "" }) { result, call in
+            switch (result, call) {
+            case (.success, _): .accepted
+            case (.failure(.emptyInstruction), _): .skipped
+            case (.failure(.noModelAvailable), _): .unavailable
+            case (.failure(.outputRejected), .success?): .rejected
+            case (.failure(.outputRejected), _): .error
+            }
         }
-        let modelOutput: String? = if case .success(let text)? = call { text } else { nil }
-        let output = (try? result.get())?.text ?? ""
-        let latency: Double? = call == nil ? nil
-            : Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
-        var record = EvalRecord(id: evalCase.id, input: evalCase, model: model.id, output: output,
-                                modelOutput: modelOutput, outcome: outcome, latencyMs: latency, failures: [])
-        record.failures = EvalRules.failures(for: record)
-        return record
     }
 
     static func runFormatting(_ evalCase: EvalCase, model: any TextModel) async -> EvalRecord {
+        await measure(evalCase, model: model, task: { await LanguageTasks.format(evalCase.formattingRequest, models: $0) },
+                      output: \.text) { result, call in
+            switch call {
+            case nil: model.isAvailable ? .skipped : .unavailable
+            case .failure?: .error
+            case .success?: result.modelID == nil ? .rejected : .accepted
+            }
+        }
+    }
+
+    /// Runs `task` with only `model` (recording what it returned), timed, and
+    /// builds the record: `output` is what would be pasted, `outcome` how it went.
+    private static func measure<Result>(
+        _ evalCase: EvalCase, model: any TextModel,
+        task: ([any TextModel]) async -> Result,
+        output: (Result) -> String,
+        outcome: (Result, RecordingTextModel.Call?) -> EvalOutcome
+    ) async -> EvalRecord {
         let recorder = RecordingTextModel(model)
         let clock = ContinuousClock()
         let start = clock.now
-        let result = await LanguageTasks.format(evalCase.formattingRequest, models: [recorder])
+        let result = await task([recorder])
         let elapsed = clock.now - start
 
         let call = recorder.call
-        let outcome: EvalOutcome
-        switch call {
-        case nil: outcome = model.isAvailable ? .skipped : .unavailable
-        case .failure?: outcome = .error
-        case .success?: outcome = result.modelID == nil ? .rejected : .accepted
-        }
         let modelOutput: String? = if case .success(let text)? = call { text } else { nil }
-        let latency: Double? = call == nil ? nil
-            : Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
-        var record = EvalRecord(id: evalCase.id, input: evalCase, model: model.id, output: result.text,
-                                modelOutput: modelOutput, outcome: outcome, latencyMs: latency, failures: [])
+        var record = EvalRecord(id: evalCase.id, input: evalCase, model: model.id, output: output(result),
+                                modelOutput: modelOutput, outcome: outcome(result, call),
+                                latencyMs: call == nil ? nil : elapsed.milliseconds, failures: [])
         record.failures = EvalRules.failures(for: record)
         return record
+    }
+}
+
+extension Duration {
+    /// The duration in milliseconds, fractional.
+    public var milliseconds: Double {
+        Double(components.seconds) * 1000 + Double(components.attoseconds) / 1e15
     }
 }
 
