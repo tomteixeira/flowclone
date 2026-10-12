@@ -1,0 +1,69 @@
+LFM2.5 1.2B Instruct (MLX, mlx-community/LFM2.5-1.2B-Instruct-4bit) on eval/formatting-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding, thinking off (enable_thinking: false).
+Prompt: same formatting prompt as the Apple baseline (with French examples, ticket 03).
+Revision: main, resolved to dee2f8a2786e6648bb644a7ca40652842490034b on huggingface.co (2026-10-12).
+Command: .build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine mlx-community/LFM2.5-1.2B-Instruct-4bit --out eval/baselines/lfm2.5-1.2b.jsonl
+Latency contamination: low. No other FlowClone eval or MLX process ran during the run (checked before
+  and after); other agents' `swift build` jobs may have been running, so latency may be slightly inflated.
+
+engine: mlx-community/LFM2.5-1.2B-Instruct-4bit
+output: eval/baselines/lfm2.5-1.2b.jsonl
+cases: 80 (accepted 59, rejected 15, skipped 6)
+latency p50: 204 ms, p95: 373 ms
+load time: 468 ms, peak memory: 716 MB
+guard pass rate: 80%
+rule-check failures: 69 in 37 cases
+  expect_not_contains: 25
+  guards_rejected: 15
+  expect_contains: 12
+  expect_ends_with: 11
+  answered_question: 6
+
+Notes
+- Fastest (p50 204 ms) and smallest, but unusable: 80% guard pass, 69 rule failures in 37 cases.
+- Often returns the raw text untouched (no capital, no punctuation, fillers and both sides of corrections
+  kept), answers questions (en-question-2 "The capital of France is Paris."), and for code cases outputs
+  a line of the system prompt ("The text goes into a code editor or terminal...").
+- Load time and peak memory were measured after a one-case warm-up run that downloaded the weights, so
+  they come from a warm OS page cache and exclude the download. Both swing a lot run to run: a repeat of
+  Qwen3 4B gave load 2.9 s / peak 735 MB vs 0.9 s / 1946 MB in its baseline. Peak memory is ru_maxrss of
+  FlowClone, which undercounts mmapped weights; the on-disk size (COMPARISON.md) is the better residency estimate.
+
+Failing cases
+en-filler-2: expect_not_contains:you know
+en-correction-1: expect_not_contains:2, expect_not_contains:no actually
+en-correction-2: expect_not_contains:John, expect_not_contains:I mean
+en-correction-3: expect_not_contains:50000, expect_not_contains:wait no
+en-correction-4: expect_not_contains:Monday
+en-question-2: guards_rejected, answered_question, expect_not_contains:Paris, expect_ends_with:?
+en-question-3: guards_rejected, answered_question, expect_ends_with:?
+en-command-2: guards_rejected, expect_contains:Spanish
+en-command-5: guards_rejected, expect_contains:three bullet points
+en-email-1: expect_contains:Tom
+en-email-5: expect_not_contains:Hi David
+en-chat-2: guards_rejected
+en-chat-3: guards_rejected
+en-code-1: guards_rejected, expect_contains:git commit
+en-code-2: guards_rejected, expect_contains:fetchUserProfile, expect_contains:TODO
+en-code-3: guards_rejected, expect_contains:variable, expect_contains:active users
+en-noun-2: guards_rejected, answered_question, expect_contains:Siobhan, expect_contains:Dublin, expect_ends_with:?
+en-long-1: expect_not_contains:Monday
+fr-filler-3: expect_not_contains:bah
+fr-filler-4: expect_not_contains:euh, expect_ends_with:.
+fr-correction-1: expect_not_contains:14h
+fr-correction-2: expect_not_contains:Jean, expect_not_contains:je veux dire
+fr-correction-3: expect_not_contains:50000, expect_not_contains:enfin non
+fr-correction-4: expect_not_contains:lundi, expect_not_contains:ah non
+fr-correction-5: expect_ends_with:?
+fr-question-1: expect_ends_with:?
+fr-question-3: guards_rejected, answered_question, expect_not_contains:euh, expect_ends_with:?
+fr-question-4: guards_rejected, answered_question, expect_ends_with:?
+fr-question-5: guards_rejected, answered_question, expect_ends_with:?
+fr-email-2: guards_rejected
+fr-email-3: expect_not_contains:non pardon
+fr-email-5: expect_not_contains:Bonjour David
+fr-chat-2: expect_contains:retard, expect_not_contains:euh
+fr-chat-3: guards_rejected
+fr-chat-4: expect_ends_with:?
+fr-noun-2: expect_ends_with:?
+fr-long-1: expect_contains:mardi, expect_not_contains:lundi

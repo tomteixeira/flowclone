@@ -1,0 +1,42 @@
+Qwen3 4B Instruct-2507 (MLX, mlx-community/Qwen3-4B-Instruct-2507-4bit) on eval/formatting-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding, thinking off (enable_thinking: false).
+Prompt: same formatting prompt as the Apple baseline (with French examples, ticket 03).
+Revision: main, resolved to 50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b (the pinned revision) on huggingface.co (2026-10-12).
+Command: .build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine mlx-community/Qwen3-4B-Instruct-2507-4bit --out eval/baselines/qwen3-4b-instruct-2507.jsonl
+Latency contamination: low. No other FlowClone eval or MLX process ran during the run (checked before
+  and after); other agents' `swift build` jobs may have been running, so latency may be slightly inflated.
+
+engine: mlx-community/Qwen3-4B-Instruct-2507-4bit
+output: eval/baselines/qwen3-4b-instruct-2507.jsonl
+cases: 80 (accepted 74, skipped 6)
+latency p50: 675 ms, p95: 1279 ms
+load time: 912 ms, peak memory: 1946 MB
+guard pass rate: 100%
+rule-check failures: 8 in 8 cases
+  expect_not_contains: 4
+  expect_contains: 2
+  expect_ends_with: 2
+
+Notes
+- Best quality of all candidates: 100% guard pass, 8 rule failures, nothing rejected.
+- No question lost its "?" except two "tu peux ..." requests that every model, Apple included, ends with ".".
+- Self-corrections resolved everywhere except long dictations: "Monday or Tuesday" (en-long-1, invents "or"),
+  "lundi, non mardi" (fr-long-1, which also has a grammar slip "d'attaque").
+- Echoes the before-cursor greeting in en/fr-email-5 (every model does). Over-shortens fr-chat-2 to
+  "Commencez sans moi." (drops "j'ai un peu de retard"). Capitalizes "Git commit" in fr-code-1.
+- Non-thinking model; enable_thinking is ignored by its template. A repeat run: p50 685 ms, p95 1123 ms,
+  same 8 failures.
+- Load time and peak memory were measured after a one-case warm-up run that downloaded the weights, so
+  they come from a warm OS page cache and exclude the download. Both swing a lot run to run: a repeat of
+  Qwen3 4B gave load 2.9 s / peak 735 MB vs 0.9 s / 1946 MB in its baseline. Peak memory is ru_maxrss of
+  FlowClone, which undercounts mmapped weights; the on-disk size (COMPARISON.md) is the better residency estimate.
+
+Failing cases
+en-email-5: expect_not_contains:Hi David
+en-long-1: expect_not_contains:Monday
+fr-correction-5: expect_ends_with:?
+fr-email-5: expect_not_contains:Bonjour David
+fr-chat-2: expect_contains:retard
+fr-code-1: expect_contains:git commit
+fr-noun-2: expect_ends_with:?
+fr-long-1: expect_not_contains:lundi
