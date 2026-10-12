@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] State machine lives in FlowCore with no AppKit/CoreGraphics dependency (plain keycode and flag bits)
 - [x] Supports the three push-to-talk keys (Right Command, Right Option, Fn) with right/left told apart as today
