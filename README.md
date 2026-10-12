@@ -49,6 +49,13 @@ questions, command-like dictations, emails, chat, code, proper nouns, very short
 `eval/baselines/` holds the Apple and Qwen3 1.7B baselines (`<engine>.jsonl`, `<engine>.summary.txt`). Judge an output file
 qualitatively by asking Claude Code to read it in a session.
 
+Real dictations: turn on "Keep dictation journal" in the menu (off by default) and every formatting and Command
+Mode run is appended to `~/Library/Application Support/FlowClone/journal.jsonl` (local only; "Clear journal"
+deletes it). The journal, or any subset of its lines (`grep`, `tail`...), is a valid corpus, and can be mixed with
+hand-written cases: `--eval ~/Library/Application\ Support/FlowClone/journal.jsonl`. Formatting records replay as
+cases with id `journal-<epoch ms>` and tag `journal`; add an `expect` object to a line by hand to get rule checks.
+Command Mode records are skipped until the harness runs Command Mode cases.
+
 ## How it maps to Wispr Flow
 | Stage | Wispr Flow | FlowClone |
 |---|---|---|

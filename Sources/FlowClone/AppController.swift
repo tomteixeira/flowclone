@@ -72,6 +72,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Local models: download at launch, load on key-down, unload when idle.
     private lazy var localModels = LocalModelManager(specs: [formattingSpec])
     private let textModelLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    /// Opt-in, off by default: log each formatting and Command Mode run locally.
+    private var journalEnabled: Bool {
+        get { defaults.bool(forKey: "journal") }
+        set { defaults.set(newValue, forKey: "journal") }
+    }
     /// Command Mode cascade, best first. Qwen 4B goes in front once it ships (ticket 08).
     private var commandModels: [any TextModel] { [appleModel] }
     private var languages: [String] {
@@ -280,6 +285,10 @@ final class AppController: NSObject, NSApplicationDelegate {
             let result = await LanguageTasks.format(request, models: formattingModels)
             log.info("formatted via \(result.modelID ?? "none (raw)", privacy: .public) in \(Date().timeIntervalSince(formatStarted), format: .fixed(precision: 2))s")
             let text = result.text
+            journal(.formatting(FormattingJournalEntry(
+                date: formatStarted, raw: request.raw, formatted: text, language: request.language,
+                category: request.category, model: result.modelID,
+                latencyMs: Date().timeIntervalSince(formatStarted) * 1000, beforeCursor: request.beforeCursor)))
             let insert = TextHeuristics.withLeadingSpaceIfNeeded(text, before: context.beforeText)
             lastTranscript = text
             paste(insert)
@@ -296,7 +305,11 @@ final class AppController: NSObject, NSApplicationDelegate {
                                      beforeSelection: context.beforeText, afterSelection: context.afterText,
                                      category: context.category, language: transcript.language)
         let started = Date()
-        switch await LanguageTasks.command(request, models: commandModels) {
+        let outcome = await LanguageTasks.command(request, models: commandModels)
+        journal(.command(CommandJournalEntry(request, date: started, result: try? outcome.get().text,
+                                             model: try? outcome.get().modelID,
+                                             latencyMs: Date().timeIntervalSince(started) * 1000)))
+        switch outcome {
         case .success(let result):
             log.info("command: \(result.action == .replaceSelection ? "replace" : "insert", privacy: .public) \(result.text.count) chars via \(result.modelID, privacy: .public) in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s")
             lastTranscript = result.text
@@ -314,6 +327,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             hud.show(.message(message), autoHideAfter: 2.5)
             NSSound(named: "Basso")?.play()
         }
+    }
+
+    /// Appends to the dictation journal, only when the user opted in.
+    private func journal(_ record: JournalRecord) {
+        guard journalEnabled else { return }
+        JournalFile.append(record)
     }
 
     private func paste(_ text: String) {
@@ -490,6 +509,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         copyLast.target = self
         menu.addItem(copyLast)
 
+        let keepJournal = NSMenuItem(title: "Keep dictation journal", action: #selector(toggleJournal), keyEquivalent: "")
+        keepJournal.target = self
+        keepJournal.state = journalEnabled ? .on : .off
+        menu.addItem(keepJournal)
+        let clearJournal = NSMenuItem(title: "Clear journal", action: #selector(clearJournal), keyEquivalent: "")
+        clearJournal.target = self
+        menu.addItem(clearJournal)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit FlowClone", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -521,6 +548,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         Task { await engine.load() } // downloads on first use; Apple's engine covers the wait
     }
 
+
+    @objc private func toggleJournal() {
+        journalEnabled.toggle()
+        rebuildMenu()
+    }
+
+    @objc private func clearJournal() {
+        JournalFile.clear()
+    }
 
     @objc private func toggleLogin() {
         let service = SMAppService.mainApp
