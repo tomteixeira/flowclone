@@ -1,43 +1,31 @@
 import AppKit
 import CoreGraphics
+import FlowCore
+
+extension PushToTalkKey {
+    var label: String {
+        switch self {
+        case .rightCommand: "Right Command (⌘)"
+        case .rightOption: "Right Option (⌥)"
+        case .fn: "Fn (🌐)"
+        }
+    }
+}
 
 /// Global push-to-talk key, observed with a CGEventTap — the same mechanism
 /// Wispr Flow's Swift helper uses (imports `CGEventTapCreate`, logs
 /// "Caps Lock flagsChanged ignored", forwards `KeypressEvent` to Electron).
 /// Modifier-only keys produce `flagsChanged` events; `keyDown`s are watched too
 /// so that using the modifier in a shortcut (⌘C, ⌥[ …) isn't taken as dictation.
+/// Interpreting the events is `HotkeyStateMachine`'s job (FlowCore); this class
+/// only owns the tap and maps the machine's outputs to callbacks.
 final class HotkeyMonitor {
-    enum Key: String, CaseIterable {
-        case rightCommand, rightOption, fn
+    typealias Key = PushToTalkKey
 
-        var keycode: Int64 {
-            switch self {
-            case .rightCommand: 54 // kVK_RightCommand
-            case .rightOption: 61  // kVK_RightOption
-            case .fn: 63           // kVK_Function
-            }
-        }
-
-        var label: String {
-            switch self {
-            case .rightCommand: "Right Command (⌘)"
-            case .rightOption: "Right Option (⌥)"
-            case .fn: "Fn (🌐)"
-            }
-        }
-
-        /// Device-dependent bits (NX_DEVICERCMDKEYMASK, NX_DEVICERALTKEYMASK) tell
-        /// the right-hand key apart from the left one.
-        func isDown(_ flags: CGEventFlags) -> Bool {
-            switch self {
-            case .rightCommand: flags.rawValue & 0x10 != 0
-            case .rightOption: flags.rawValue & 0x40 != 0
-            case .fn: flags.contains(.maskSecondaryFn)
-            }
-        }
+    var key: Key {
+        get { machine.key }
+        set { machine = HotkeyStateMachine(key: newValue) }
     }
-
-    var key: Key
     var onPress: () -> Void = {}
     var onRelease: () -> Void = {}
     /// Another key was pressed while holding the hotkey: it's a shortcut, not dictation.
@@ -45,10 +33,9 @@ final class HotkeyMonitor {
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var isDown = false
-    private var interrupted = false
+    private var machine: HotkeyStateMachine
 
-    init(key: Key) { self.key = key }
+    init(key: Key) { machine = HotkeyStateMachine(key: key) }
 
     /// Returns false when the tap can't be created (Accessibility not granted).
     @discardableResult
@@ -78,36 +65,29 @@ final class HotkeyMonitor {
     }
 
     private func handle(type: CGEventType, event: CGEvent) {
+        let keyEvent: KeyEvent
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             // The system disables slow taps; turn ours back on.
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-
+            return
         case .keyDown:
-            if isDown, !interrupted {
-                interrupted = true
-                onInterrupt()
-            }
-
+            keyEvent = .keyDown
         case .flagsChanged:
-            guard event.getIntegerValueField(.keyboardEventKeycode) == key.keycode else {
-                // Another modifier while holding ours (e.g. ⌥⇧) also means a shortcut.
-                if isDown, !interrupted { interrupted = true; onInterrupt() }
-                return
+            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+            if keycode == key.keycode {
+                log.debug("flagsChanged keycode=\(keycode) flags=\(String(event.flags.rawValue, radix: 16), privacy: .public)")
             }
-            let down = key.isDown(event.flags)
-            log.debug("flagsChanged keycode=\(event.getIntegerValueField(.keyboardEventKeycode)) flags=\(String(event.flags.rawValue, radix: 16), privacy: .public) down=\(down)")
-            guard down != isDown else { return }
-            isDown = down
-            if down {
-                interrupted = false
-                onPress()
-            } else if !interrupted {
-                onRelease()
-            }
-
+            keyEvent = .flagsChanged(keycode: keycode, flags: event.flags.rawValue)
         default:
-            break
+            return
+        }
+        for output in machine.handle(keyEvent) {
+            switch output {
+            case .press: onPress()
+            case .release: onRelease()
+            case .interrupt: onInterrupt()
+            }
         }
     }
 }
