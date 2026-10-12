@@ -317,7 +317,8 @@ final class AppController: NSObject, NSApplicationDelegate {
                 return
             }
             let request = FormattingRequest(raw: transcript.text, language: transcript.language,
-                                            category: context.category, beforeCursor: context.beforeText)
+                                            category: context.category, beforeCursor: context.beforeText,
+                                            vocabulary: vocabulary())
             let formatStarted = Date()
             let result = await LanguageTasks.format(request, models: formattingModels)
             log.info("formatted via \(result.modelID ?? "none (raw)", privacy: .public) in \(Date().timeIntervalSince(formatStarted), format: .fixed(precision: 2))s")

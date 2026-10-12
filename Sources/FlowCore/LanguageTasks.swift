@@ -32,12 +32,17 @@ public struct FormattingRequest: Sendable, Equatable {
     public var category: AppCategory
     /// Text before the cursor; only its tail is sent to the model.
     public var beforeCursor: String
+    /// Terms to spell the user's way (personal dictionary, name, words on
+    /// screen); near misses in the text to paste are snapped to them.
+    public var vocabulary: [String]
 
-    public init(raw: String, language: String?, category: AppCategory, beforeCursor: String) {
+    public init(raw: String, language: String?, category: AppCategory, beforeCursor: String,
+                vocabulary: [String] = []) {
         self.raw = raw
         self.language = language
         self.category = category
         self.beforeCursor = beforeCursor
+        self.vocabulary = vocabulary
     }
 }
 
@@ -61,7 +66,15 @@ extension LanguageTasks {
     /// for this, so the dictation is fenced off as data, decoding is greedy, and
     /// every output is checked; a rejected output falls through to the next model,
     /// and with no model left the raw transcript is returned (never lose words).
+    /// Whatever is returned is then corrected against the request's vocabulary,
+    /// since a model may respell a name the speech engine got right.
     public static func format(_ request: FormattingRequest, models: [any TextModel]) async -> FormattingResult {
+        var result = await cleanUp(request, models: models)
+        result.text = VocabularyCorrection.apply(to: result.text, vocabulary: request.vocabulary)
+        return result
+    }
+
+    private static func cleanUp(_ request: FormattingRequest, models: [any TextModel]) async -> FormattingResult {
         let raw = request.raw
         let unchanged = FormattingResult(text: raw, modelID: nil)
         guard !TextHeuristics.shouldSkipFormatting(raw) else { return unchanged }

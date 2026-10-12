@@ -130,6 +130,24 @@ final class FormattingTests: XCTestCase {
         XCTAssertTrue(model.lastInstructions.contains("The dictation is in French"))
     }
 
+    // MARK: Vocabulary
+
+    func testVocabularyFixesTheModelsSpelling() async {
+        let model = FakeTextModel("qwen", reply: .text("Can you send the Kameleon report by Friday?"))
+        let request = FormattingRequest(raw: "um can you send the kameleoon report by friday", language: "en",
+                                        category: .chat, beforeCursor: "", vocabulary: ["Kameleoon"])
+        let result = await LanguageTasks.format(request, models: [model])
+        XCTAssertEqual(result.text, "Can you send the Kameleoon report by Friday?")
+        XCTAssertEqual(result.modelID, "qwen")
+    }
+
+    func testVocabularyAlsoAppliesToTheRawFallback() async {
+        let request = FormattingRequest(raw: "send the kameleon report by friday", language: "en",
+                                        category: .chat, beforeCursor: "", vocabulary: ["Kameleoon"])
+        let result = await LanguageTasks.format(request, models: [])
+        XCTAssertEqual(result, FormattingResult(text: "send the Kameleoon report by friday", modelID: nil))
+    }
+
     // MARK: Engine choice
 
     func testOffNeverCallsAModel() async {
