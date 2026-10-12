@@ -10,6 +10,9 @@ final class SetupModel: ObservableObject {
     @Published var accessibility = AXIsProcessTrusted()
     @Published var modelStatus = "Preparing…"
     @Published var modelReady = false
+    /// The local formatting model; optional for dictation, so not part of `allGood`.
+    @Published var textModelStatus = ""
+    @Published var textModelReady = false
     @Published var hotkeyLabel = ""
     @Published var hotkeyListening = false
     @Published var hotkeySeen = false
@@ -54,6 +57,11 @@ private struct SetupView: View {
                 }
             }
             row(ok: model.modelReady, title: "Speech model", detail: model.modelStatus) { EmptyView() }
+            if !model.textModelStatus.isEmpty {
+                row(ok: model.textModelReady, title: "Text model",
+                    detail: model.textModelReady ? model.textModelStatus
+                        : "\(model.textModelStatus). Cleanup uses Apple's model meanwhile, if available.") { EmptyView() }
+            }
             row(ok: model.hotkeyListening && model.hotkeySeen, title: "Hotkey test",
                 detail: !model.hotkeyListening ? "Keyboard listener not running yet (needs Accessibility)"
                     : model.hotkeySeen ? "\(model.hotkeyLabel) detected" : "Press \(model.hotkeyLabel) once — this turns green") { EmptyView() }
