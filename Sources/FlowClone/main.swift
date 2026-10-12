@@ -1,3 +1,4 @@
+import FlowCore
 import AppKit
 import AVFoundation
 
@@ -18,8 +19,10 @@ if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < Command
             let start = Date()
             let transcript = try await engine.transcribe(samples: samples, languages: languages, vocabulary: vocabulary)
             print("[\(transcript.language ?? "?")] \(String(format: "%.2f", Date().timeIntervalSince(start)))s RAW: \(transcript.text)")
-            let cleaned = await Formatter.format(transcript.text, language: transcript.language, context: FocusContext())
-            print("CLEAN: \(cleaned)")
+            let request = FormattingRequest(raw: transcript.text, language: transcript.language,
+                                            category: .other, beforeCursor: "")
+            let cleaned = await LanguageTasks.format(request, models: FormattingEngine.apple.candidates(local: nil, apple: AppleTextModel()))
+            print("CLEAN: \(cleaned.text)")
             exit(0)
         } catch {
             print("error: \(error)")
