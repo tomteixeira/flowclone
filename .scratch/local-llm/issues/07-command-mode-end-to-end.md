@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (TextModel seam + FlowCore formatting module), 02 (Push-to-talk state machine)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] State machine: Shift while held gives command mode; Shift already held at press gives command mode; Shift released before key release keeps command mode; any other modifier or keyDown still interrupts; emits a mode-changed event
 - [x] State machine tests cover each rule above
@@ -15,3 +15,7 @@
 - [ ] Without a selection, the result is inserted at the cursor with the dictation leading-space logic
 - [x] Rejected output or no model: HUD message, nothing pasted, instruction never pasted as text
 - [ ] Manual check: "make this more formal" on a selection in Mail; "write a short email moving the meeting to Thursday" with no selection
+
+## Comments
+
+- The HUD Command Mode look is implemented but unverified on screen; check it in the running app along with the unticked manual items (⌘Z undo, insertion at cursor, Mail manual check).
