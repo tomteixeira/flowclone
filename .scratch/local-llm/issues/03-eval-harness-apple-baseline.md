@@ -22,3 +22,4 @@
 - French examples added to the formatting prompt (ticket 01 carry-over), plus French fillers in the filler list and an email style that no longer invites invented sign-offs. Validated with the corpus: 26 failures in 19 cases before, 22 in 17 after. A variant listing self-correction keywords was dropped: it made the model keep "mars" in "mars non pardon d'avril".
 - `stripModelWrapping` now also strips a tag wrapping the whole output (`<after_cursor>...</after_cursor>`), seen on the corpus.
 - Not fixed, noted for ticket 05: the model echoes the before-cursor text into its output (6 cases), which the guards reject.
+- `--engine` now also takes MLX models (ticket 04, after merge); Qwen3 1.7B baseline in `eval/baselines/qwen3-1.7b.*`.

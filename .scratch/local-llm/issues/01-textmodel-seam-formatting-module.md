@@ -19,3 +19,4 @@
 ## Comments
 
 - French examples in the formatting prompt (spec) not yet added — carried to ticket 03.
+- French examples landed in ticket 03 (formatting prompt + French fillers, validated on the eval corpus).
