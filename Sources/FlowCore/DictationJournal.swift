@@ -38,11 +38,15 @@ public struct FormattingJournalEntry: Codable, Sendable, Equatable {
 
 /// One Command Mode run, as logged by the opt-in dictation journal.
 public struct CommandJournalEntry: Codable, Sendable, Equatable {
+    /// How much context is kept on each side of the selection, as for formatting.
+    public static let contextLimit = FormattingJournalEntry.beforeCursorLimit
+
     public var date: Date
     public var instruction: String
     /// Selected text; empty when nothing was selected.
     public var selection: String
-    /// Context around the selection (or cursor), as captured.
+    /// Context around the selection (or cursor): the last and first
+    /// `contextLimit` characters.
     public var beforeSelection: String
     public var afterSelection: String
     public var category: AppCategory
@@ -60,8 +64,8 @@ public struct CommandJournalEntry: Codable, Sendable, Equatable {
         self.date = date
         self.instruction = instruction
         self.selection = selection
-        self.beforeSelection = beforeSelection
-        self.afterSelection = afterSelection
+        self.beforeSelection = String(beforeSelection.suffix(Self.contextLimit))
+        self.afterSelection = String(afterSelection.prefix(Self.contextLimit))
         self.category = category
         self.language = language
         self.result = result

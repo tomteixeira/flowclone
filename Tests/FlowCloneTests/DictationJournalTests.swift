@@ -27,6 +27,18 @@ final class DictationJournalTests: XCTestCase {
         XCTAssertTrue(entry.beforeCursor.hasSuffix("aend"))
     }
 
+    func testKeepsOnlyThe300CharactersOnEachSideOfTheSelection() {
+        let before = String(repeating: "a", count: 500) + "end"
+        let after = "start" + String(repeating: "z", count: 500)
+        let entry = CommandJournalEntry(date: date, instruction: "x", selection: "y", beforeSelection: before,
+                                        afterSelection: after, category: .other, language: nil, result: nil,
+                                        model: nil, latencyMs: 0)
+        XCTAssertEqual(entry.beforeSelection.count, 300)
+        XCTAssertTrue(entry.beforeSelection.hasSuffix("aend"))
+        XCTAssertEqual(entry.afterSelection.count, 300)
+        XCTAssertTrue(entry.afterSelection.hasPrefix("startz"))
+    }
+
     func testFormattingRecordBecomesAFormattingEvalCase() throws {
         let evalCase = try XCTUnwrap(formatting.evalCase)
         XCTAssertEqual(evalCase.id, "journal-1760000000250")
