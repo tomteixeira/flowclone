@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** done (manual app check pending)
+**Status:** resolved
 
 - [x] `TextModel` protocol in FlowCore: instructions + prompt + generation options in, text out (async); can report unavailable; can throw
 - [x] FlowCore formatting entry point takes raw transcript, language, app category, before-cursor text, and an ordered list of candidate models, and returns the text to paste
@@ -15,3 +15,7 @@
 - [ ] App and `--transcribe` call the FlowCore module; pasted output is unchanged for the same inputs (code path wired and prompt/options moved verbatim; manual check in the app and with `--transcribe` still to do)
 - [x] XCTest coverage with fake `TextModel`s for cascade, guards, skip heuristic and `off`, in the style of `TextHeuristicsTests`
 - [x] `swift test` passes
+
+## Comments
+
+- French examples in the formatting prompt (spec) not yet added — carried to ticket 03.
