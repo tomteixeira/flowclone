@@ -15,8 +15,8 @@ public struct LocalModelSpec: Sendable, Equatable, Hashable {
     /// For the menu: "Qwen3 1.7B" / "Qwen3 4B" for the default models, else the repo name.
     public var displayName: String {
         switch self {
-        case LocalModels.formatting: "Qwen3 1.7B"
-        case LocalModels.commandMode: "Qwen3 4B"
+        case LocalModels.qwen3_1_7B: "Qwen3 1.7B"
+        case LocalModels.qwen3_4B_Instruct2507: "Qwen3 4B"
         default: String(id.split(separator: "/").last ?? Substring(id))
         }
     }
@@ -25,21 +25,24 @@ public struct LocalModelSpec: Sendable, Equatable, Hashable {
 /// The 4-bit MLX conversions FlowClone uses, pinned to the commits checked on
 /// huggingface.co (2026-10-12).
 public enum LocalModels {
-    /// Formatting. Thinking is turned off through the chat template (`enable_thinking: false`).
+    /// The first formatting model until ADR 0002; kept for the eval harness and
+    /// `FLOWCLONE_LLM=qwen3-1.7b`, no longer downloaded by the app. Thinking is
+    /// turned off through the chat template (`enable_thinking: false`).
     public static let qwen3_1_7B = LocalModelSpec(
         id: "mlx-community/Qwen3-1.7B-4bit", revision: "3b1b1768f8f8cf8351c712464f906e86c2b8269e")
-    /// Command Mode: the non-thinking Instruct-2507 variant.
+    /// Formatting and Command Mode: the non-thinking Instruct-2507 variant.
     public static let qwen3_4B_Instruct2507 = LocalModelSpec(
         id: "mlx-community/Qwen3-4B-Instruct-2507-4bit", revision: "50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b")
     /// Command Mode fallback if Instruct-2507 disappears (thinking model, needs `enable_thinking: false`).
     public static let qwen3_4B = LocalModelSpec(
         id: "mlx-community/Qwen3-4B-4bit", revision: "4dcb3d101c2a062e5c1d4bb173588c54ea6c4d25")
 
-    public static let formatting = qwen3_1_7B
+    /// One model for both tasks (ADR 0002): one download, one resident copy.
+    public static let formatting = qwen3_4B_Instruct2507
     public static let commandMode = qwen3_4B_Instruct2507
 
     static let pinned = [qwen3_1_7B, qwen3_4B_Instruct2507, qwen3_4B]
-    static let aliases = ["qwen3-1.7b": formatting, "qwen3-4b": commandMode]
+    static let aliases = ["qwen3-1.7b": qwen3_1_7B, "qwen3-4b": qwen3_4B_Instruct2507]
 
     /// A short alias ("qwen3-1.7b", "qwen3-4b"), a repo id ("org/name", pinned when
     /// known, else "main"), or "org/name@revision". Nil when it's none of these.

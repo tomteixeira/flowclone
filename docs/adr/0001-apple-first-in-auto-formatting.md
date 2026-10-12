@@ -1,6 +1,6 @@
 # 0001: Apple's model stays first in Auto formatting; Qwen3 1.7B is the fallback
 
-**Status:** accepted (2026-10-12)
+**Status:** superseded by [0002](0002-qwen3-4b-first-in-auto-formatting.md) (2026-10-12)
 
 ## Context
 

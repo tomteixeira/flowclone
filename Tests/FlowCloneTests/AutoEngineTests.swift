@@ -24,6 +24,11 @@ final class FormattingSettingTests: XCTestCase {
 }
 
 final class LocalModelPreloadTests: XCTestCase {
+    func testAutoTriesTheLocalModelFirstThenApple() {
+        XCTAssertEqual(FormattingEngine.auto.order, [.local, .apple])
+        XCTAssertTrue(FormattingEngine.auto.preloadsLocal(appleAvailable: true))
+    }
+
     func testLocalFirstAlwaysPreloads() {
         XCTAssertTrue(FormattingEngine.preloadsLocal(order: [.local, .apple], appleAvailable: true))
         XCTAssertTrue(FormattingEngine.preloadsLocal(order: [.local, .apple], appleAvailable: false))
@@ -90,7 +95,7 @@ final class DownloadQueueTests: XCTestCase {
 
 final class LocalModelResidencyTests: XCTestCase {
     private let t0 = Date(timeIntervalSinceReferenceDate: 0)
-    private let policy = ResidencyPolicy(idleTimeout: 900, waitBudget: 0.75, assumedLoadDuration: 4)
+    private let policy = ResidencyPolicy(idleTimeout: 900, assumedLoadDuration: 4)
 
     private func loaded(at time: TimeInterval) -> LocalModelResidency {
         var residency = LocalModelResidency(policy: policy)
@@ -104,20 +109,20 @@ final class LocalModelResidencyTests: XCTestCase {
 
     func testNotDownloadedOrDownloadingIsUnavailable() {
         var residency = LocalModelResidency(policy: policy)
-        XCTAssertEqual(residency.readiness(at: t0), .unavailable)
+        XCTAssertEqual(residency.readiness(at: t0, wait: .formatting), .unavailable)
         residency.downloadProgressed(0.4)
-        XCTAssertEqual(residency.readiness(at: t0), .unavailable)
+        XCTAssertEqual(residency.readiness(at: t0, wait: .formatting), .unavailable)
         XCTAssertEqual(residency.phase, .downloading(0.4))
     }
 
     func testDownloadedButNotLoadedIsUnavailable() {
         var residency = LocalModelResidency(policy: policy)
         residency.downloadFinished()
-        XCTAssertEqual(residency.readiness(at: t0), .unavailable)
+        XCTAssertEqual(residency.readiness(at: t0, wait: .formatting), .unavailable)
     }
 
     func testLoadedIsReady() {
-        XCTAssertEqual(loaded(at: 2).readiness(at: t0.addingTimeInterval(10)), .ready)
+        XCTAssertEqual(loaded(at: 2).readiness(at: t0.addingTimeInterval(10), wait: .formatting), .ready)
     }
 
     func testLoadFinishingWithinTheBudgetIsWorthWaitingFor() {
@@ -125,14 +130,14 @@ final class LocalModelResidencyTests: XCTestCase {
         residency.downloadFinished()
         residency.loadStarted(at: t0)
         // Assumed 4 s load, 3.5 s in: about 0.5 s left.
-        XCTAssertEqual(residency.readiness(at: t0.addingTimeInterval(3.5)), .wait(upTo: 0.75))
+        XCTAssertEqual(residency.readiness(at: t0.addingTimeInterval(3.5), wait: .formatting), .wait(upTo: 0.75))
     }
 
     func testLoadFarFromDoneFallsThrough() {
         var residency = LocalModelResidency(policy: policy)
         residency.downloadFinished()
         residency.loadStarted(at: t0)
-        XCTAssertEqual(residency.readiness(at: t0.addingTimeInterval(1)), .unavailable)
+        XCTAssertEqual(residency.readiness(at: t0.addingTimeInterval(1), wait: .formatting), .unavailable)
     }
 
     func testMeasuredLoadTimeReplacesTheAssumption() {
@@ -140,13 +145,13 @@ final class LocalModelResidencyTests: XCTestCase {
         residency.unloaded()
         let second = t0.addingTimeInterval(5000)
         residency.loadStarted(at: second)
-        XCTAssertEqual(residency.readiness(at: second.addingTimeInterval(0.5)), .wait(upTo: 0.75))
+        XCTAssertEqual(residency.readiness(at: second.addingTimeInterval(0.5), wait: .formatting), .wait(upTo: 0.75))
     }
 
     func testFailedDownloadIsUnavailable() {
         var residency = LocalModelResidency(policy: policy)
         residency.downloadFailed("offline")
-        XCTAssertEqual(residency.readiness(at: t0), .unavailable)
+        XCTAssertEqual(residency.readiness(at: t0, wait: .formatting), .unavailable)
         XCTAssertEqual(residency.phase, .downloadFailed("offline"))
     }
 
@@ -201,71 +206,87 @@ final class LocalModelResidencyTests: XCTestCase {
         XCTAssertEqual(residency.phase, .downloaded)
         XCTAssertTrue(residency.canLoad)
         XCTAssertNil(residency.unloadDue)
-        XCTAssertEqual(residency.readiness(at: t0.addingTimeInterval(2000)), .unavailable)
+        XCTAssertEqual(residency.readiness(at: t0.addingTimeInterval(2000), wait: .formatting), .unavailable)
     }
 }
 
-final class CommandModeResidencyTests: XCTestCase {
-    private let shift = Date(timeIntervalSinceReferenceDate: 0)
+/// Qwen3 4B serves both tasks from one residency; each request brings its own wait budget.
+final class SharedModelResidencyTests: XCTestCase {
+    private let pressed = Date(timeIntervalSinceReferenceDate: 0)
 
-    private func loadingSinceShift() -> LocalModelResidency {
-        var residency = LocalModelResidency(policy: .commandMode)
+    private func loadingSince(_ time: Date) -> LocalModelResidency {
+        var residency = LocalModelResidency(policy: .fourB)
         residency.downloadFinished()
-        residency.loadStarted(at: shift)
+        residency.loadStarted(at: time)
         return residency
     }
 
-    func testALoadStartedAtShiftAFewSecondsBeforeReleaseIsWaitedFor() {
+    func testAFormattingRequestWaitsOnlyWhenTheLoadIsAboutToFinish() {
+        // Assumed 6 s load from key-down: a 5.5 s dictation waits, a 2.5 s one goes to Apple.
+        XCTAssertEqual(loadingSince(pressed).readiness(at: pressed.addingTimeInterval(5.5), wait: .formatting),
+                       .wait(upTo: 0.75))
+        XCTAssertEqual(loadingSince(pressed).readiness(at: pressed.addingTimeInterval(2.5), wait: .formatting),
+                       .unavailable)
+    }
+
+    func testACommandRequestOnTheSameLoadWaitsUpToFourSeconds() {
         // Shift, then ~2.5 s of instruction and transcription: the 4B is still loading.
-        XCTAssertEqual(loadingSinceShift().readiness(at: shift.addingTimeInterval(2.5)), .wait(upTo: 4))
+        XCTAssertEqual(loadingSince(pressed).readiness(at: pressed.addingTimeInterval(2.5), wait: .commandMode),
+                       .wait(upTo: 4))
     }
 
     func testALoadStartedJustBeforeReleaseFallsThroughToApple() {
-        XCTAssertEqual(loadingSinceShift().readiness(at: shift.addingTimeInterval(0.5)), .unavailable)
+        XCTAssertEqual(loadingSince(pressed).readiness(at: pressed.addingTimeInterval(0.5), wait: .commandMode),
+                       .unavailable)
     }
 
     func testWithNothingToFallBackOnALongLoadIsWaitedOut() {
-        XCTAssertEqual(loadingSinceShift().readiness(at: shift.addingTimeInterval(0.5), lastResort: true),
+        XCTAssertEqual(loadingSince(pressed).readiness(at: pressed.addingTimeInterval(0.5), wait: .untilLoaded),
                        .wait(upTo: .infinity))
     }
 
     func testWithNothingToFallBackOnAModelNotOnDiskStillFailsFast() {
-        var residency = LocalModelResidency(policy: .commandMode)
-        XCTAssertEqual(residency.readiness(at: shift, lastResort: true), .unavailable)
+        var residency = LocalModelResidency(policy: .fourB)
+        XCTAssertEqual(residency.readiness(at: pressed, wait: .untilLoaded), .unavailable)
         residency.downloadProgressed(0.5)
-        XCTAssertEqual(residency.readiness(at: shift, lastResort: true), .unavailable)
+        XCTAssertEqual(residency.readiness(at: pressed, wait: .untilLoaded), .unavailable)
     }
 
     func testTheFourBUnloadsAfterFifteenIdleMinutes() {
-        var residency = loadingSinceShift()
-        residency.loadFinished(at: shift.addingTimeInterval(6))
-        XCTAssertFalse(residency.shouldUnload(at: shift.addingTimeInterval(6 + 899)))
-        XCTAssertTrue(residency.shouldUnload(at: shift.addingTimeInterval(6 + 900)))
+        var residency = loadingSince(pressed)
+        residency.loadFinished(at: pressed.addingTimeInterval(6))
+        XCTAssertFalse(residency.shouldUnload(at: pressed.addingTimeInterval(6 + 899)))
+        XCTAssertTrue(residency.shouldUnload(at: pressed.addingTimeInterval(6 + 900)))
     }
 }
 
 final class LocalModelPlanTests: XCTestCase {
-    func testThe4BDownloadsAfterThe1_7B() {
-        XCTAssertEqual(LocalModelPlan(override: nil).downloads, [LocalModels.formatting, LocalModels.commandMode])
-    }
-
-    func testDictationLoadsOnlyThe1_7BAndCommandModeOnlyThe4B() {
+    func testFormattingAndCommandModeShareOneDownloadOfQwen3_4B() {
         let plan = LocalModelPlan(override: nil)
-        XCTAssertEqual(plan.model(for: .dictation), LocalModels.formatting)
-        XCTAssertEqual(plan.model(for: .command), LocalModels.commandMode)
+        XCTAssertEqual(plan.downloads, [LocalModels.qwen3_4B_Instruct2507])
+        XCTAssertEqual(plan.model(for: .dictation), LocalModels.qwen3_4B_Instruct2507)
+        XCTAssertEqual(plan.model(for: .command), LocalModels.qwen3_4B_Instruct2507)
     }
 
-    func testThe4BGetsTheCommandModeWaitBudget() {
+    func testTheResidencyPolicyFollowsTheModelNotTheTask() {
         let plan = LocalModelPlan(override: nil)
-        XCTAssertEqual(plan.policy(for: LocalModels.commandMode), .commandMode)
-        XCTAssertEqual(plan.policy(for: LocalModels.formatting), .standard)
+        XCTAssertEqual(plan.policy(for: LocalModels.qwen3_4B_Instruct2507), .fourB)
+        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.qwen3_1_7B)).policy(for: LocalModels.qwen3_1_7B), .standard)
     }
 
-    func testAModelForcedForBothTasksKeepsTheFormattingBudget() {
-        let plan = LocalModelPlan(override: .local(LocalModels.formatting))
-        XCTAssertEqual(plan.downloads, [LocalModels.formatting])
-        XCTAssertEqual(plan.model(for: .command), LocalModels.formatting)
-        XCTAssertEqual(plan.policy(for: LocalModels.formatting), .standard)
+    func testFormattingWaitsBrieflyCommandModeLonger() {
+        let plan = LocalModelPlan(override: nil)
+        for appleAvailable in [true, false] {
+            XCTAssertEqual(plan.loadWait(for: .dictation, appleAvailable: appleAvailable), .upTo(0.75))
+        }
+        XCTAssertEqual(plan.loadWait(for: .command, appleAvailable: true), .upTo(4))
+        XCTAssertEqual(plan.loadWait(for: .command, appleAvailable: false), .untilLoaded)
+    }
+
+    func testAModelForcedForBothTasksDownloadsOnce() {
+        let plan = LocalModelPlan(override: .local(LocalModels.qwen3_1_7B))
+        XCTAssertEqual(plan.downloads, [LocalModels.qwen3_1_7B])
+        XCTAssertEqual(plan.model(for: .command), LocalModels.qwen3_1_7B)
     }
 
     func testAppleOrOffOverridesManageNoLocalModel() {
@@ -284,7 +305,7 @@ final class LocalModelPlanTests: XCTestCase {
         let qwen = FakeTextModel("qwen", reply: .text("x"))
         let apple = FakeTextModel("apple", reply: .text("x"))
         let plan = LocalModelPlan(override: nil)
-        XCTAssertEqual(plan.formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), ["apple", "qwen"])
+        XCTAssertEqual(plan.formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), ["qwen", "apple"])
         XCTAssertEqual(plan.formattingCandidates(engine: .apple, local: qwen, apple: apple).map(\.id), ["apple"])
         XCTAssertEqual(plan.formattingCandidates(engine: .off, local: qwen, apple: apple).map(\.id), [])
     }
@@ -292,7 +313,7 @@ final class LocalModelPlanTests: XCTestCase {
     func testOverridesForceTheFormattingCascadeWhateverTheSetting() {
         let qwen = FakeTextModel("qwen", reply: .text("x"))
         let apple = FakeTextModel("apple", reply: .text("x"))
-        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.formatting))
+        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.qwen3_1_7B))
             .formattingCandidates(engine: .off, local: qwen, apple: apple).map(\.id), ["qwen"])
         XCTAssertEqual(LocalModelPlan(override: .apple)
             .formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), ["apple"])
@@ -300,21 +321,37 @@ final class LocalModelPlanTests: XCTestCase {
             .formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), [])
     }
 
-    func testKeyDownPreloadsTheFormattingModelOnlyWhenTheCascadeWouldReachIt() {
+    func testAutoPreloadsQwenAtEveryKeyDown() {
         let plan = LocalModelPlan(override: nil)
-        XCTAssertFalse(plan.preloadsFormattingModel(engine: .auto, appleAvailable: true))
+        XCTAssertTrue(plan.preloadsFormattingModel(engine: .auto, appleAvailable: true))
         XCTAssertTrue(plan.preloadsFormattingModel(engine: .auto, appleAvailable: false))
-        XCTAssertFalse(plan.preloadsFormattingModel(engine: .apple, appleAvailable: false))
-        XCTAssertTrue(LocalModelPlan(override: .local(LocalModels.formatting))
+    }
+
+    func testTheAppleSettingNeverLoadsOrCallsTheLocalModel() {
+        let qwen = FakeTextModel("qwen", reply: .text("x"))
+        let apple = FakeTextModel("apple", reply: .text("x"))
+        let plan = LocalModelPlan(override: nil)
+        for appleAvailable in [true, false] {
+            XCTAssertFalse(plan.preloadsFormattingModel(engine: .apple, appleAvailable: appleAvailable))
+            XCTAssertFalse(plan.preloadsFormattingModel(engine: .off, appleAvailable: appleAvailable))
+        }
+        XCTAssertEqual(plan.formattingCandidates(engine: .apple, local: qwen, apple: apple).map(\.id), ["apple"])
+    }
+
+    func testOverridesDecideTheFormattingPreload() {
+        XCTAssertTrue(LocalModelPlan(override: .local(LocalModels.qwen3_1_7B))
             .preloadsFormattingModel(engine: .off, appleAvailable: true))
         XCTAssertFalse(LocalModelPlan(override: .apple).preloadsFormattingModel(engine: .auto, appleAvailable: false))
     }
 
     func testTheCommandModelIsTheLastResortOnlyWhenAppleCantTakeOver() {
-        XCTAssertTrue(LocalModelPlan(override: nil).commandModelIsLastResort(appleAvailable: false))
-        XCTAssertFalse(LocalModelPlan(override: nil).commandModelIsLastResort(appleAvailable: true))
-        XCTAssertTrue(LocalModelPlan(override: .local(LocalModels.formatting)).commandModelIsLastResort(appleAvailable: true))
-        XCTAssertFalse(LocalModelPlan(override: .apple).commandModelIsLastResort(appleAvailable: false))
+        XCTAssertEqual(LocalModelPlan(override: nil).loadWait(for: .command, appleAvailable: false), .untilLoaded)
+        XCTAssertEqual(LocalModelPlan(override: nil).loadWait(for: .command, appleAvailable: true), .commandMode)
+        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.qwen3_1_7B)).loadWait(for: .command, appleAvailable: true),
+                       .untilLoaded)
+        // Formatting has the raw transcript to fall back on: never an open-ended wait.
+        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.qwen3_1_7B)).loadWait(for: .dictation, appleAvailable: true),
+                       .formatting)
     }
 
     func testOverridesForceTheCommandModeCascade() {
@@ -322,7 +359,7 @@ final class LocalModelPlanTests: XCTestCase {
         let apple = FakeTextModel("apple", reply: .text("x"))
         XCTAssertEqual(LocalModelPlan(override: .apple).commandCandidates(local: qwen, apple: apple).map(\.id), ["apple"])
         XCTAssertEqual(LocalModelPlan(override: .off).commandCandidates(local: qwen, apple: apple).map(\.id), [])
-        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.formatting))
+        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.qwen3_1_7B))
             .commandCandidates(local: qwen, apple: apple).map(\.id), ["qwen"])
     }
 }
