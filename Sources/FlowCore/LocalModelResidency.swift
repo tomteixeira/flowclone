@@ -1,34 +1,46 @@
 import Foundation
 
-/// Timing rules for keeping a local model in memory.
+/// Timing rules for keeping one local model in memory. They belong to the
+/// model, not to a task: formatting and Command Mode share Qwen3 4B, and how
+/// long each may wait for a load is a property of the request (`LoadWait`).
 public struct ResidencyPolicy: Sendable, Equatable {
     /// A loaded model is released after this long without use.
     public var idleTimeout: TimeInterval
-    /// How long a transcript may wait for a load already in progress before the
-    /// cascade falls through to the next model.
-    public var waitBudget: TimeInterval
     /// Load time (weights + kernel warm-up) assumed until one has been measured.
     public var assumedLoadDuration: TimeInterval
 
-    public init(idleTimeout: TimeInterval, waitBudget: TimeInterval, assumedLoadDuration: TimeInterval) {
+    public init(idleTimeout: TimeInterval, assumedLoadDuration: TimeInterval) {
         self.idleTimeout = idleTimeout
-        self.waitBudget = waitBudget
         self.assumedLoadDuration = assumedLoadDuration
     }
 
-    /// ~15 minutes idle. The wait budget roughly matches the sentence latency
-    /// target (400 ms) plus slack; a 1.7B load with warm-up takes a few seconds,
-    /// so only a load started early in the hold (at key-down) is waited for.
-    public static let standard = ResidencyPolicy(idleTimeout: 15 * 60, waitBudget: 0.75, assumedLoadDuration: 4)
+    /// ~15 minutes idle; a 1.7B-class load with warm-up takes a few seconds.
+    public static let standard = ResidencyPolicy(idleTimeout: 15 * 60, assumedLoadDuration: 4)
 
-    /// The Command Mode model (Qwen 4B). Its load only starts at Shift, often
-    /// seconds into the hold, so it is usually still loading at release. Command
-    /// Mode has no 400 ms target (generation alone takes a second or more) and
-    /// Qwen 4B is the better model, so a load expected to finish within 4 s is
-    /// waited for; a longer one (Shift pressed just before release, a cold disk)
-    /// falls through to Apple's model. The 4B has ~2.3× the 1.7B's weights
-    /// (3.1 s measured), hence ~6 s assumed until this Mac has measured one.
-    public static let commandMode = ResidencyPolicy(idleTimeout: 15 * 60, waitBudget: 4, assumedLoadDuration: 6)
+    /// Qwen3 4B: ~2.3x the 1.7B's weights (3.1 s measured), hence ~6 s assumed
+    /// until this Mac has measured one.
+    public static let fourB = ResidencyPolicy(idleTimeout: 15 * 60, assumedLoadDuration: 6)
+}
+
+/// How long one request may wait for a load already in progress before its
+/// cascade falls through to the next model. A per-request choice, so one
+/// shared model can serve a latency-bound task and a patient one.
+public enum LoadWait: Sendable, Equatable {
+    /// Wait if the load should finish within this many seconds, and no longer.
+    case upTo(TimeInterval)
+    /// No other model could take over: wait however long the load takes.
+    case untilLoaded
+
+    /// Formatting: roughly the sentence latency target (400 ms) plus slack, so
+    /// only a load started early in the hold (at key-down) is waited for;
+    /// otherwise Apple's model formats this dictation.
+    public static let formatting = LoadWait.upTo(0.75)
+
+    /// Command Mode: its load may start at Shift, seconds into the hold, and it
+    /// has no 400 ms target (generation alone takes a second or more), so a
+    /// load expected to finish within 4 s is waited for; a longer one (Shift
+    /// pressed just before release, a cold disk) falls through to Apple's model.
+    public static let commandMode = LoadWait.upTo(4)
 }
 
 /// Backoff between attempts of a failed model download (which resumes where it stopped).
@@ -152,19 +164,17 @@ public struct LocalModelResidency: Sendable, Equatable {
     /// True when the model is on disk and neither loading nor loaded.
     public var canLoad: Bool { phase == .downloaded }
 
-    /// `lastResort`: no other model could take over, so a load in progress is
-    /// waited out however long it takes rather than giving up after the budget.
-    /// A model that isn't on disk is unavailable either way.
-    public func readiness(at now: Date, lastResort: Bool = false) -> LocalModelReadiness {
+    /// Whether a request that may wait `wait` for a load in progress can use the
+    /// model now. A model that isn't on disk is unavailable whatever the wait.
+    public func readiness(at now: Date, wait: LoadWait) -> LocalModelReadiness {
         switch phase {
         case .loaded:
             return .ready
-        case .loading where lastResort:
-            return .wait(upTo: .infinity)
         case .loading(let since):
+            guard case .upTo(let budget) = wait else { return .wait(upTo: .infinity) }
             let expected = lastLoadDuration ?? policy.assumedLoadDuration
             let remaining = since.addingTimeInterval(expected).timeIntervalSince(now)
-            return remaining <= policy.waitBudget ? .wait(upTo: policy.waitBudget) : .unavailable
+            return remaining <= budget ? .wait(upTo: budget) : .unavailable
         case .notDownloaded, .downloading, .downloadFailed, .downloaded:
             return .unavailable
         }

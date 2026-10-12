@@ -4,16 +4,20 @@ Hold a key, talk, release — cleaned-up text appears in whatever app you're typ
 A native macOS take on Wispr Flow's dictation (see [docs/wispr-flow-teardown.md](docs/wispr-flow-teardown.md)),
 fully on-device: **NVIDIA Parakeet TDT 0.6B v3** (FluidAudio, CoreML) for speech — 25 European languages, ~0.1 s
 per sentence — with **Whisper large-v3 turbo** (WhisperKit) selectable in the menu for prompt-based vocabulary and
-~100 languages. Apple's `DictationTranscriber` covers the first launch while the model downloads, and the
-`FoundationModels` on-device LLM does the cleanup. No account; network only for the one-time model download.
+~100 languages. Apple's `DictationTranscriber` covers the first launch while the model downloads. Cleanup runs
+on **Qwen3 4B Instruct-2507** (MLX, 2.1 GB, downloaded once and shared with Command Mode), with Apple's
+`FoundationModels` on-device LLM as the fallback. No account; network only for the one-time model downloads.
 
-Requires macOS 26 (Apple Intelligence enabled for the AI cleanup step; without it, raw transcripts are pasted).
+Requires macOS 26. Without Apple Intelligence, Qwen3 4B still formats; with neither, raw transcripts are pasted.
 
 ## Run
 ```sh
 scripts/build-app.sh --install   # builds, replaces /Applications/FlowClone.app, launches it
 ```
-Languages, push-to-talk key, AI cleanup, personal dictionary and "Open at login" are in the menu-bar menu.
+Languages, push-to-talk key, formatting, personal dictionary and "Open at login" are in the menu-bar menu.
+**Formatting** has three choices: **Auto** (Qwen3 4B, local, first; Apple's model when Qwen isn't loaded in time;
+best quality, ~170 ms slower than Apple), **Apple** (Apple's model only, faster; never loads Qwen for formatting)
+and **Off** (paste the raw transcript). See [ADR 0002](docs/adr/0002-qwen3-4b-first-in-auto-formatting.md).
 Check transcription without the UI: `.build/debug/FlowClone --transcribe file.wav fr,en Kameleoon,Sarah`
 (`FLOWCLONE_ENGINE=whisper` to test Whisper). The last dictation is kept in `~/Library/Application Support/FlowClone/last-recording.wav`.
 FlowClone has no Dock icon or main window: it lives in the menu bar (🎙 icon, top right). A setup window opens on
@@ -46,7 +50,7 @@ is one, even if the guards rejected it: `guards_rejected`, `model_error`, `model
 
 `eval/formatting-corpus.jsonl` holds 80 hand-written cases (40 French, 40 English: fillers, self-corrections,
 questions, command-like dictations, emails, chat, code, proper nouns, very short inputs).
-`eval/baselines/` holds the Apple and Qwen3 1.7B baselines (`<engine>.jsonl`, `<engine>.summary.txt`). Judge an output file
+`eval/baselines/` holds one baseline per model (`<engine>.jsonl`, `<engine>.summary.txt`), compared in `eval/baselines/COMPARISON.md`. Judge an output file
 qualitatively by asking Claude Code to read it in a session.
 
 Real dictations: turn on "Keep dictation journal" in the menu (off by default) and every formatting and Command
@@ -80,8 +84,8 @@ selection, reply using the surrounding text); baselines are `eval/baselines/comm
 | ASR | Opus → gRPC `TranscribeStream` → in-house "Canto" / external ASR | `ParakeetEngine` (default) or `WhisperEngine`, on-device |
 | Language | `selectedLanguages`: one → forced, several → detected | same, detection restricted to selected languages |
 | Vocabulary | `dictionary` = AX + OCR words + name + personal dictionary | same minus OCR: Whisper prompt tokens, near-miss correction for Parakeet, and again after formatting for every engine |
-| Formatting | `/llm/formatting` (fine-tuned Llama 3.1 8B) | `LanguageTasks.format` (FlowCore: prompt, skip heuristic, output guards, vocabulary correction) over a cascade of on-device models: Apple's foundation model, then Qwen3 1.7B (MLX); raw transcript if none |
-| Command Mode | `/llm/command_mode` (`full_text`, `selected_text`, `instruction`) | Shift + push-to-talk → `LanguageTasks.command` (FlowCore) over Qwen3 4B (MLX), then Apple's model; replaces the selection or inserts at the cursor, HUD message and no paste on failure |
+| Formatting | `/llm/formatting` (fine-tuned Llama 3.1 8B) | `LanguageTasks.format` (FlowCore: prompt, skip heuristic, output guards, vocabulary correction) over a cascade of on-device models: in Auto, Qwen3 4B Instruct-2507 (MLX, preloaded at key-down, waited for up to 0.75 s), then Apple's foundation model; raw transcript if none |
+| Command Mode | `/llm/command_mode` (`full_text`, `selected_text`, `instruction`) | Shift + push-to-talk → `LanguageTasks.command` (FlowCore) over the same Qwen3 4B (MLX, waited for up to 4 s), then Apple's model; replaces the selection or inserts at the cursor, HUD message and no paste on failure |
 | Insert | lazy pasteboard + ⌘V + success detection + restore | `Paster` (same technique) |
 
 ## Test

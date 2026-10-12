@@ -25,8 +25,8 @@ final class LocalModelTests: XCTestCase {
 
 final class LocalModelSpecTests: XCTestCase {
     func testDefaultModelsHaveShortNamesOthersTheirRepoName() {
-        XCTAssertEqual(LocalModels.formatting.displayName, "Qwen3 1.7B")
-        XCTAssertEqual(LocalModels.commandMode.displayName, "Qwen3 4B")
+        XCTAssertEqual(LocalModels.qwen3_1_7B.displayName, "Qwen3 1.7B")
+        XCTAssertEqual(LocalModels.qwen3_4B_Instruct2507.displayName, "Qwen3 4B")
         XCTAssertEqual(LocalModelSpec(id: "org/Some-Model-4bit", revision: "main").displayName, "Some-Model-4bit")
     }
 }
@@ -44,8 +44,9 @@ final class LanguageModelOverrideTests: XCTestCase {
     }
 
     func testShortAliasesNameTheTaskModels() throws {
-        XCTAssertEqual(try LanguageModelOverride.parse("qwen3-1.7b"), .local(LocalModels.formatting))
-        XCTAssertEqual(try LanguageModelOverride.parse("Qwen3-4B"), .local(LocalModels.commandMode))
+        XCTAssertEqual(try LanguageModelOverride.parse("qwen3-1.7b"), .local(LocalModels.qwen3_1_7B))
+        XCTAssertEqual(try LanguageModelOverride.parse("Qwen3-4B"), .local(LocalModels.qwen3_4B_Instruct2507))
+        XCTAssertEqual(LocalModels.formatting, LocalModels.commandMode)
         XCTAssertEqual(LocalModels.commandMode.id, "mlx-community/Qwen3-4B-Instruct-2507-4bit")
     }
 

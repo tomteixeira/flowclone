@@ -1,6 +1,6 @@
 /// Which local models the app manages, which one each session mode loads, and
-/// how long each may keep a transcript waiting. Formatting uses Qwen 1.7B,
-/// Command Mode Qwen 4B; `FLOWCLONE_LLM` forces one model (or none) for both.
+/// how long each task may keep a transcript waiting. Both tasks use Qwen3 4B
+/// Instruct-2507 (ADR 0002); `FLOWCLONE_LLM` forces one model (or none) for both.
 public struct LocalModelPlan: Sendable, Equatable {
     /// The local model formatting sessions use; nil when forced to Apple or off.
     public let formatting: LocalModelSpec?
@@ -24,22 +24,31 @@ public struct LocalModelPlan: Sendable, Equatable {
         }
     }
 
-    /// Download order: the formatting model first, the Command Mode model once it's in place.
+    /// Download order: the formatting model first, the Command Mode model once
+    /// it's in place; a model both tasks share downloads once.
     public var downloads: [LocalModelSpec] {
         var seen = Set<LocalModelSpec>()
         return [formatting, command].compactMap { $0 }.filter { seen.insert($0).inserted }
     }
 
-    /// The local model a session of this mode loads. A formatting session never
-    /// loads the Command Mode model, and the reverse.
+    /// The local model a session of this mode loads.
     public func model(for mode: SessionMode) -> LocalModelSpec? {
         mode == .command ? command : formatting
     }
 
-    /// Residency rules for a managed model: the Command Mode model gets the
-    /// longer wait budget; a model shared with formatting keeps formatting's.
+    /// Residency rules for a managed model, by model size: one residency per
+    /// model, whichever tasks share it.
     public func policy(for spec: LocalModelSpec) -> ResidencyPolicy {
-        spec == command && spec != formatting ? .commandMode : .standard
+        [LocalModels.qwen3_4B_Instruct2507, LocalModels.qwen3_4B].contains(spec) ? .fourB : .standard
+    }
+
+    /// How long a request of this mode may wait for its local model's load in
+    /// progress. Formatting always has a fallback (Apple's model, else the raw
+    /// transcript) and a latency target, so it waits briefly. Command Mode waits
+    /// longer, and until the load ends when no other model could take over.
+    public func loadWait(for mode: SessionMode, appleAvailable: Bool) -> LoadWait {
+        guard mode == .command else { return .formatting }
+        return commandModelIsLastResort(appleAvailable: appleAvailable) ? .untilLoaded : .commandMode
     }
 
     // MARK: Cascades
@@ -87,7 +96,7 @@ public struct LocalModelPlan: Sendable, Equatable {
     /// Whether the Command Mode local model is the last model that could run
     /// Command Mode, so a load in progress is worth waiting out: Apple's model
     /// can't take over, or an override forces the local model alone.
-    public func commandModelIsLastResort(appleAvailable: Bool) -> Bool {
+    private func commandModelIsLastResort(appleAvailable: Bool) -> Bool {
         guard command != nil, let index = commandOrder.firstIndex(of: .local) else { return false }
         return commandOrder[(index + 1)...].allSatisfy { $0 == .apple && !appleAvailable }
     }

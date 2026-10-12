@@ -9,17 +9,17 @@ public enum ModelSource: String, Sendable, CaseIterable {
 /// The user's formatting-engine setting: the order `LanguageTasks.format`
 /// cascades over models in (`LocalModelPlan.formattingCandidates` resolves it).
 public enum FormattingEngine: String, Sendable, CaseIterable {
-    /// The best model available, falling back to the other one.
+    /// The local model first, falling back to Apple's (see `autoOrder`).
     case auto
     /// Apple's foundation model only.
     case apple
     /// No cleanup: the raw transcript is pasted.
     case off
 
-    /// The order `auto` tries models in. Apple stays first until the evaluation
-    /// shows the local model matching or beating it within the latency budget;
-    /// then flip this to `[.local, .apple]`.
-    public static let autoOrder: [ModelSource] = [.apple, .local]
+    /// The order `auto` tries models in: Qwen3 4B Instruct-2507 first (it beats
+    /// Apple's model on the formatting eval, at ~170 ms more per dictation),
+    /// Apple's model when it isn't ready (ADR 0002). `.apple` is the faster escape hatch.
+    public static let autoOrder: [ModelSource] = [.local, .apple]
 
     /// The saved setting, or, before one was saved, the migrated "AI cleanup"
     /// toggle: `cleanup=false` becomes `.off`, anything else `.auto`.
@@ -38,7 +38,8 @@ public enum FormattingEngine: String, Sendable, CaseIterable {
 
     /// Whether to start loading the local model at key-down: only when the
     /// cascade would actually reach it, i.e. every model ahead of it is
-    /// unavailable. Keeps ~1 GB out of memory while Apple's model handles it.
+    /// unavailable. With Auto (local first) that's every key-down; with Apple
+    /// or Off the local model is never loaded for formatting.
     public func preloadsLocal(appleAvailable: Bool) -> Bool {
         Self.preloadsLocal(order: order, appleAvailable: appleAvailable)
     }

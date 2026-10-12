@@ -15,10 +15,14 @@ Run: `.build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine <org
 
 **Blocked by:** none
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Each candidate loads through `MLXTextModel` with no reasoning/`<think>` content in the output (note any that need a template flag or don't load at all)
-- [ ] Release-build run per candidate on the M5 16 GB; `eval/baselines/<short-name>.jsonl` + `.summary.txt` committed (p50/p95, load time, peak memory, guard pass rate, rule-check failures)
-- [ ] Apple re-run on a release build, so the latency comparison is like for like
-- [ ] Qualitative judgement per candidate against Apple, focused on the ADR 0001 failure modes: self-corrections (wrong side kept), "?" on questions with French spacing, fillers, before-cursor echo, meaning changes in chat
-- [ ] Outcome recorded: a new ADR if a candidate earns the first place in Auto (flip `FormattingEngine.autoOrder`) or replaces Qwen3 1.7B as the fallback; otherwise, the best candidate to use as the LoRA base
+- [x] Each candidate loads through `MLXTextModel` with no reasoning/`<think>` content in the output (note any that need a template flag or don't load at all)
+- [x] Release-build run per candidate on the M5 16 GB; `eval/baselines/<short-name>.jsonl` + `.summary.txt` committed (p50/p95, load time, peak memory, guard pass rate, rule-check failures)
+- [x] Apple re-run on a release build, so the latency comparison is like for like
+- [x] Qualitative judgement per candidate against Apple, focused on the ADR 0001 failure modes: self-corrections (wrong side kept), "?" on questions with French spacing, fillers, before-cursor echo, meaning changes in chat
+- [x] Outcome recorded: a new ADR if a candidate earns the first place in Auto (flip `FormattingEngine.autoOrder`) or replaces Qwen3 1.7B as the fallback; otherwise, the best candidate to use as the LoRA base
+
+## Comments
+
+- Resolved by ADR 0002 (`docs/adr/0002-qwen3-4b-first-in-auto-formatting.md`), from the results in `eval/baselines/COMPARISON.md`. Qwen3 4B Instruct-2507 beats Apple (100% guard pass, 8 rule failures vs 22) at p50 ~680 ms vs ~510 ms. It now goes first in Auto (`FormattingEngine.autoOrder = [.local, .apple]`), shares one download and residency with Command Mode, and replaces Qwen3 1.7B in the app. Formatting → Apple is the faster escape hatch.

@@ -5,7 +5,7 @@ import AVFoundation
 // Developer check, no UI or permissions needed:
 //   FlowClone --transcribe <audio file> [fr,en] [Vocab,Words]   → real ASR + cleanup pipeline
 //   (FLOWCLONE_ENGINE=whisper to test Whisper instead of Parakeet;
-//    FLOWCLONE_LLM=qwen3-1.7b, apple, off or any MLX repo id to force the cleanup model)
+//    FLOWCLONE_LLM=qwen3-4b, qwen3-1.7b, apple, off or any MLX repo id to force the cleanup model)
 if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < CommandLine.arguments.count {
     let path = CommandLine.arguments[i + 1]
     let languages = i + 2 < CommandLine.arguments.count ? CommandLine.arguments[i + 2].split(separator: ",").map(String.init) : ["fr", "en"]

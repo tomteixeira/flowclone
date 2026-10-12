@@ -29,24 +29,25 @@ final class MLXTextModel: TextModel {
 
     /// Unmanaged (CLI, eval harness): always offered, downloads and loads on
     /// first use. Managed (the app's `LocalModelManager`): offered only when
-    /// loaded, or when a load in progress should finish within the wait budget.
-    var isAvailable: Bool { isAvailable(lastResort: false) }
+    /// loaded; use `waiting(_:)` to also accept a load about to finish.
+    var isAvailable: Bool { isAvailable(wait: .upTo(0)) }
 
-    private func isAvailable(lastResort: Bool) -> Bool {
+    private func isAvailable(wait: LoadWait) -> Bool {
         guard managed else { return true }
-        return residency.withLock { $0.readiness(at: Date(), lastResort: lastResort) } != .unavailable
+        return residency.withLock { $0.readiness(at: Date(), wait: wait) } != .unavailable
     }
 
-    /// The same model as the last one a cascade can try: a load in progress is
-    /// waited out instead of giving up after the policy's wait budget.
-    var asLastResort: any TextModel { LastResort(base: self) }
+    /// The same model for one task's requests, waiting up to `wait` for a load
+    /// in progress. One shared model, one residency; the budget is per request.
+    func waiting(_ wait: LoadWait) -> any TextModel { Waiting(base: self, wait: wait) }
 
-    private struct LastResort: TextModel {
+    private struct Waiting: TextModel {
         let base: MLXTextModel
+        let wait: LoadWait
         var id: String { base.id }
-        var isAvailable: Bool { base.isAvailable(lastResort: true) }
+        var isAvailable: Bool { base.isAvailable(wait: wait) }
         func generate(instructions: String, prompt: String, options: TextGenerationOptions) async throws -> String {
-            try await base.generate(instructions: instructions, prompt: prompt, options: options, lastResort: true)
+            try await base.generate(instructions: instructions, prompt: prompt, options: options, wait: wait)
         }
     }
 
@@ -124,15 +125,15 @@ final class MLXTextModel: TextModel {
     }
 
     func generate(instructions: String, prompt: String, options: TextGenerationOptions) async throws -> String {
-        try await generate(instructions: instructions, prompt: prompt, options: options, lastResort: false)
+        try await generate(instructions: instructions, prompt: prompt, options: options, wait: .upTo(0))
     }
 
     private func generate(instructions: String, prompt: String, options: TextGenerationOptions,
-                          lastResort: Bool) async throws -> String {
+                          wait: LoadWait) async throws -> String {
         if managed {
             // Decide and mark the use atomically so an idle unload can't slip in between.
             let readiness = residency.withLock { state -> LocalModelReadiness in
-                let readiness = state.readiness(at: Date(), lastResort: lastResort)
+                let readiness = state.readiness(at: Date(), wait: wait)
                 if readiness != .unavailable { state.useBegan() }
                 return readiness
             }

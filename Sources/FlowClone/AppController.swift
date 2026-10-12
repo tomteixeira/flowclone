@@ -72,7 +72,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }()
     /// Which local model formatting and Command Mode each use.
     private lazy var localPlan = LocalModelPlan(override: llmOverride)
-    /// Local models: download at launch (1.7B, then 4B), load on key-down
+    /// Local models: download at launch (one Qwen3 4B for both tasks), load on key-down
     /// (formatting) or Shift (Command Mode), unload each when idle.
     private lazy var localModels = LocalModelManager(specs: localPlan.downloads, policy: localPlan.policy(for:))
     private let textModelLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -87,8 +87,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// With nothing after it, a 4B load in progress is waited out.
     private var commandModels: [any TextModel] {
         let model = localPlan.command.flatMap { localModels.model(for: $0) }
-        let lastResort = localPlan.commandModelIsLastResort(appleAvailable: appleModel.isAvailable)
-        return localPlan.commandCandidates(local: lastResort ? model?.asLastResort : model, apple: appleModel)
+        let wait = localPlan.loadWait(for: .command, appleAvailable: appleModel.isAvailable)
+        return localPlan.commandCandidates(local: model?.waiting(wait), apple: appleModel)
     }
     private var languages: [String] {
         get {
@@ -648,7 +648,9 @@ extension AppController {
     /// Cascade order for this dictation. A local model that isn't loaded (or about
     /// to be) reports itself unavailable, so the cascade moves on without waiting.
     private var formattingModels: [any TextModel] {
-        localPlan.formattingCandidates(engine: formattingEngine, local: localModels.model(for: formattingSpec), apple: appleModel)
+        let wait = localPlan.loadWait(for: .dictation, appleAvailable: appleModel.isAvailable)
+        return localPlan.formattingCandidates(engine: formattingEngine,
+                                              local: localModels.model(for: formattingSpec)?.waiting(wait), apple: appleModel)
     }
 
     private func startLocalModels() {
@@ -657,7 +659,8 @@ extension AppController {
         localModels.start()
     }
 
-    /// Key-down: start loading the formatting model so it overlaps with the recording.
+    /// Key-down: start loading the formatting model so it overlaps with the
+    /// recording. With Auto that's every key-down; Apple and Off never load it.
     private func preloadFormattingModel() {
         if localPlan.preloadsFormattingModel(engine: formattingEngine, appleAvailable: appleModel.isAvailable) {
             localModels.prepare(formattingSpec)
@@ -679,9 +682,10 @@ extension AppController {
     }
 
     private func formattingMenuItem() -> NSMenuItem {
-        let appleLabel = appleModel.isAvailable ? "Apple" : "Apple (Apple Intelligence off)"
+        let appleLabel = appleModel.isAvailable ? "Apple — Apple Intelligence only, faster"
+            : "Apple — Apple Intelligence only (currently off)"
         let choices: [(FormattingEngine, String)] = [
-            (.auto, "Auto — on-device models, best available"),
+            (.auto, "Auto — \(formattingSpec.displayName) (local) first, then Apple"),
             (.apple, appleLabel),
             (.off, "Off — paste the raw transcript"),
         ]
