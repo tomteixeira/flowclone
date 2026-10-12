@@ -52,7 +52,7 @@ enum EvalCommand {
         if let mlx = model as? MLXTextModel {
             // Download (first run only), load and kernel warm-up.
             do {
-                try await mlx.load { stderr("llm: downloading \(Int($0 * 100))%") }
+                try await mlx.load { printToStandardError("llm: downloading \(Int($0 * 100))%") }
             } catch {
                 return fail("can't load \(mlx.id): \(error)")
             }
@@ -72,7 +72,7 @@ enum EvalCommand {
             records.append(record)
             if let data = try? encoder.encode(record) { lines += String(decoding: data, as: UTF8.self) + "\n" }
             let mark = record.failures.isEmpty ? "ok" : record.failures.joined(separator: " ")
-            stderr("[\(n + 1)/\(cases.count)] \(record.id) \(record.outcome.rawValue) "
+            printToStandardError("[\(n + 1)/\(cases.count)] \(record.id) \(record.outcome.rawValue) "
                    + "\(record.latencyMs.map { String(format: "%.0fms", $0) } ?? "-") \(mark)")
         }
         do {
@@ -94,12 +94,12 @@ enum EvalCommand {
         return UInt64(usage.ru_maxrss) // bytes on macOS
     }
 
-    static func stderr(_ line: String) {
+    static func printToStandardError(_ line: String) {
         FileHandle.standardError.write(Data((line + "\n").utf8))
     }
 
     static func fail(_ message: String) -> Int32 {
-        stderr(message)
+        printToStandardError(message)
         return 1
     }
 }

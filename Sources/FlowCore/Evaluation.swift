@@ -360,7 +360,7 @@ public enum EvalRules {
         if record.modelOutput != nil, TextHeuristics.looksLikeQuestion(raw), !text.contains("?") {
             failures.append("answered_question")
         }
-        if let expected = record.input.language, let detected = dominantLanguage(text), detected != expected {
+        if let expected = record.input.language, let detected = frenchOrEnglish(text), detected != expected {
             failures.append("language_changed")
         }
         return failures + expectationFailures(record.input.expect, text: text)
@@ -404,8 +404,8 @@ public enum EvalRules {
 
         let selection = input.selection.trimmingCharacters(in: .whitespacesAndNewlines)
         let expectedLanguage = input.expect?.language
-            ?? (selection.isEmpty ? input.language : dominantLanguage(selection))
-        if let expectedLanguage, let detected = dominantLanguage(text), detected != expectedLanguage {
+            ?? (selection.isEmpty ? input.language : frenchOrEnglish(selection))
+        if let expectedLanguage, let detected = frenchOrEnglish(text), detected != expectedLanguage {
             failures.append("language_changed")
         }
         if !selection.isEmpty, text == selection { failures.append("unchanged") }
@@ -423,8 +423,9 @@ public enum EvalRules {
         return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    /// French or English, for texts long enough to tell (4+ words); nil otherwise.
-    static func dominantLanguage(_ text: String) -> String? {
+    /// "fr" or "en", whichever `text` is closer to (the corpus languages), for
+    /// texts long enough to tell (4+ words); nil otherwise.
+    static func frenchOrEnglish(_ text: String) -> String? {
         guard TextHeuristics.words(text).count >= 4 else { return nil }
         let recognizer = NLLanguageRecognizer()
         recognizer.languageConstraints = [.french, .english]

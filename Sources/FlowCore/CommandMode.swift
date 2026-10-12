@@ -139,7 +139,7 @@ extension LanguageTasks {
             ? "Apply the instruction to the text inside <selection> and output the rewritten text that replaces it."
             : "Write the text the instruction asks for; it is inserted at <cursor/>, between <before> and <after>."
         let languageRule: String
-        if hasSelection, let name = TextHeuristics.dominantLanguage(request.selection).flatMap(TextHeuristics.languageName) {
+        if hasSelection, let name = TextHeuristics.detectedLanguage(request.selection).flatMap(TextHeuristics.languageName) {
             languageRule = "Write in \(name), the language of the selection, unless the instruction asks for a translation."
         } else if hasSelection {
             languageRule = "Write in the language of the selection unless the instruction asks for a translation."
@@ -214,8 +214,8 @@ extension TextHeuristics {
         Locale(identifier: "en").localizedString(forLanguageCode: code)
     }
 
-    /// ISO code of the dominant language of `text`, nil when unsure.
-    public static func dominantLanguage(_ text: String) -> String? {
+    /// ISO code of the dominant language of `text`, any language; nil when unsure.
+    public static func detectedLanguage(_ text: String) -> String? {
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(text)
         guard let language = recognizer.dominantLanguage, language != .undetermined else { return nil }
