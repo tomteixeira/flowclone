@@ -65,6 +65,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         get { defaults.object(forKey: "cleanup") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "cleanup") }
     }
+    /// Until the local model lands (and the Formatting menu with it), the cleanup
+    /// toggle maps to Apple's model or nothing.
+    private var formattingEngine: FormattingEngine { cleanupEnabled ? .apple : .off }
+    private let appleModel = AppleTextModel()
     private var languages: [String] {
         get {
             if let saved = defaults.stringArray(forKey: "languages") { return saved }
@@ -249,9 +253,9 @@ final class AppController: NSObject, NSApplicationDelegate {
                 hud.show(.message("Didn't catch that"), autoHideAfter: 1.5)
                 return
             }
-            let text = cleanupEnabled
-                ? await Formatter.format(transcript.text, language: transcript.language, context: context)
-                : transcript.text
+            let request = FormattingRequest(raw: transcript.text, language: transcript.language,
+                                            category: context.category, beforeCursor: context.beforeText)
+            let text = await LanguageTasks.format(request, models: formattingEngine.candidates(local: nil, apple: appleModel)).text
             let insert = TextHeuristics.withLeadingSpaceIfNeeded(text, before: context.beforeText)
             lastTranscript = text
             paster.paste(insert) { [weak self] outcome in
@@ -396,11 +400,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         engineItem.submenu = engineMenu
         menu.addItem(engineItem)
 
-        let cleanup = NSMenuItem(title: Formatter.isAvailable ? "AI cleanup (on-device)" : "AI cleanup (Apple Intelligence off)",
+        let appleAvailable = appleModel.isAvailable
+        let cleanup = NSMenuItem(title: appleAvailable ? "AI cleanup (on-device)" : "AI cleanup (Apple Intelligence off)",
                                  action: #selector(toggleCleanup), keyEquivalent: "")
         cleanup.target = self
-        cleanup.state = cleanupEnabled && Formatter.isAvailable ? .on : .off
-        cleanup.isEnabled = Formatter.isAvailable
+        cleanup.state = cleanupEnabled && appleAvailable ? .on : .off
+        cleanup.isEnabled = appleAvailable
         menu.addItem(cleanup)
 
         let hotkeyMenu = NSMenu()
