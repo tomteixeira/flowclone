@@ -1,0 +1,26 @@
+Qwen3 4B Instruct 2507 (MLX, mlx-community/Qwen3-4B-Instruct-2507-4bit), Command Mode baseline on eval/command-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding.
+Prompt: same Command Mode prompt as the Apple baseline (ticket 07, LanguageTasks.command).
+Command: .build/release/FlowClone --eval eval/command-corpus.jsonl --engine qwen3-4b --out eval/baselines/command-qwen3-4b.jsonl
+
+engine: mlx-community/Qwen3-4B-Instruct-2507-4bit
+output: eval/baselines/command-qwen3-4b.jsonl
+cases: 35 (accepted 35)
+latency p50: 740 ms, p95: 2866 ms
+load time: 41682 ms, peak memory: 829 MB
+guard pass rate: 100%
+rule-check failures: 1 in 1 cases
+  expect_max_length: 1
+
+Notes
+- Load time includes the first-run download of the model (~2.3 GB); a cached load is a few seconds.
+- Peak memory is FlowClone's process, which holds the model (Apple's model runs out of process).
+- Slowest cases are the long French outputs (fr-summarize-2 3.8 s, fr-reply-3 2.9 s, fr-summarize-1 2.8 s).
+- Compared with Apple on the same corpus (9 failures in 9 cases): no tag echoing (`wrapped` 0 vs 4), real
+  summaries ("tldr this" summarized, Apple returned the text), grammar fixes complete (its/Friday, malgré),
+  and replies written as the recipient (fr-reply-3), not as the sender.
+- Not caught by the rule checks: fr-reply-3 invents vacation dates ("du 10 au 14 juin") that nobody gave.
+- The one failure, en-summarize-1, is a faithful one-sentence summary at 262 characters against a 250 limit.
+
+Failing cases
+en-summarize-1: expect_max_length:250

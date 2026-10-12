@@ -140,22 +140,21 @@ public enum JournalRecord: Codable, Sendable, Equatable {
 
     /// The record as an evaluation case, replaying the same input. The id comes
     /// from the record's timestamp, so it survives filtering the journal.
-    /// Nil for Command Mode until the harness runs Command Mode cases (ticket 09):
-    /// then map `CommandJournalEntry` to a `.command` case here.
-    public var evalCase: EvalCase? {
+    public var evalCase: EvalCase {
         switch self {
         case .formatting(let e):
             EvalCase(id: Self.caseID(e.date), task: .formatting, raw: e.raw, language: e.language,
                      category: e.category, beforeCursor: e.beforeCursor, tags: ["journal"], expect: e.expect)
-        case .command:
-            nil
+        case .command(let e):
+            EvalCase(id: Self.caseID(e.date), task: .command, raw: e.instruction, language: e.language,
+                     category: e.category, beforeCursor: e.beforeSelection, selection: e.selection,
+                     afterCursor: e.afterSelection, tags: ["journal"], expect: e.expect)
         }
     }
 
-    /// The journal (or a filtered subset of its lines) as a corpus; records
-    /// the harness can't run yet are left out.
+    /// The journal (or a filtered subset of its lines) as a corpus.
     public static func evalCases(fromJSONL text: String) throws -> [EvalCase] {
-        try decodeJSONL(text).compactMap(\.evalCase)
+        try decodeJSONL(text).map(\.evalCase)
     }
 
     static func caseID(_ date: Date) -> String {
@@ -167,7 +166,7 @@ extension EvalCase {
     /// A corpus file: hand-written cases and journal records, one per line, in
     /// any mix. A line with a `kind` key is a journal record.
     public static func decodeCorpus(_ text: String) throws -> [EvalCase] {
-        try JournalRecord.lines(text).compactMap { line in
+        try JournalRecord.lines(text).map { line in
             if line.contains(#""kind""#), let record = try? JournalRecord.decode(line) { return record.evalCase }
             return try JSONDecoder().decode(EvalCase.self, from: Data(line.utf8))
         }

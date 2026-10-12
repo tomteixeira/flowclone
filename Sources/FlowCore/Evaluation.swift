@@ -3,10 +3,14 @@ import NaturalLanguage
 
 extension AppCategory: Codable {}
 
-/// Which language task a corpus case exercises. Command Mode cases come next
-/// (ticket 09); journal records (ticket 10) convert into these cases.
+/// Which language task a corpus case exercises; journal records (ticket 10)
+/// convert into these cases.
 public enum EvalTask: String, Codable, Sendable {
+    /// `raw` is a dictation, run through `LanguageTasks.format`.
     case formatting
+    /// `raw` is a spoken instruction applied to `selection` (or written at the
+    /// cursor when it is empty), run through `LanguageTasks.command`.
+    case command
 }
 
 /// Optional automatic checks for one case.
@@ -18,54 +22,106 @@ public struct EvalExpectations: Codable, Sendable, Equatable {
     public var notContains: [String]?
     /// The trimmed output must end with this string, e.g. "?" or ".".
     public var endsWith: String?
+    /// Command Mode: ISO code of the language the output must be in, e.g. the
+    /// target of a translation. Defaults to the selection's language, else the
+    /// case's `language`.
+    public var language: String?
+    /// Command Mode: the output must be at most this many characters (summaries).
+    public var maxLength: Int?
 
-    public init(contains: [String]? = nil, notContains: [String]? = nil, endsWith: String? = nil) {
+    public init(contains: [String]? = nil, notContains: [String]? = nil, endsWith: String? = nil,
+                language: String? = nil, maxLength: Int? = nil) {
         self.contains = contains
         self.notContains = notContains
         self.endsWith = endsWith
+        self.language = language
+        self.maxLength = maxLength
     }
 }
 
 /// One line of an evaluation corpus (JSONL). Fields other than `id` and `raw`
 /// are optional so hand-written cases stay short.
+///
+/// Command Mode cases set `"task":"command"`; their spoken instruction goes in
+/// `raw` (or `instruction`, read as an alias), the selected text in `selection`
+/// (empty: generate at the cursor) and the text around it in `beforeCursor` /
+/// `afterCursor`.
 public struct EvalCase: Codable, Sendable, Equatable {
     public var id: String
     public var task: EvalTask
+    /// The dictation, or the spoken instruction for a Command Mode case.
     public var raw: String
+    /// ISO code of what was spoken, as the speech engine would report it.
     public var language: String?
     public var category: AppCategory
+    /// Text before the cursor, or before the selection.
     public var beforeCursor: String
+    /// Command Mode: the selected text; empty when nothing is selected.
+    public var selection: String
+    /// Command Mode: text after the selection (or cursor).
+    public var afterCursor: String
     public var tags: [String]?
     public var expect: EvalExpectations?
 
     public init(id: String, task: EvalTask = .formatting, raw: String, language: String?, category: AppCategory = .other,
-                beforeCursor: String = "", tags: [String]? = nil, expect: EvalExpectations? = nil) {
+                beforeCursor: String = "", selection: String = "", afterCursor: String = "",
+                tags: [String]? = nil, expect: EvalExpectations? = nil) {
         self.id = id
         self.task = task
         self.raw = raw
         self.language = language
         self.category = category
         self.beforeCursor = beforeCursor
+        self.selection = selection
+        self.afterCursor = afterCursor
         self.tags = tags
         self.expect = expect
     }
 
-    enum CodingKeys: String, CodingKey { case id, task, raw, language, category, beforeCursor, tags, expect }
+    enum CodingKeys: String, CodingKey {
+        case id, task, raw, instruction, language, category, beforeCursor, selection, afterCursor, tags, expect
+    }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         task = try c.decodeIfPresent(EvalTask.self, forKey: .task) ?? .formatting
-        raw = try c.decode(String.self, forKey: .raw)
+        if let instruction = try c.decodeIfPresent(String.self, forKey: .instruction), !c.contains(.raw) {
+            raw = instruction
+        } else {
+            raw = try c.decode(String.self, forKey: .raw)
+        }
         language = try c.decodeIfPresent(String.self, forKey: .language)
         category = try c.decodeIfPresent(AppCategory.self, forKey: .category) ?? .other
         beforeCursor = try c.decodeIfPresent(String.self, forKey: .beforeCursor) ?? ""
+        selection = try c.decodeIfPresent(String.self, forKey: .selection) ?? ""
+        afterCursor = try c.decodeIfPresent(String.self, forKey: .afterCursor) ?? ""
         tags = try c.decodeIfPresent([String].self, forKey: .tags)
         expect = try c.decodeIfPresent(EvalExpectations.self, forKey: .expect)
     }
 
+    /// Command Mode fields are written only when set, so formatting records keep their shape.
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(task, forKey: .task)
+        try c.encode(raw, forKey: .raw)
+        try c.encodeIfPresent(language, forKey: .language)
+        try c.encode(category, forKey: .category)
+        try c.encode(beforeCursor, forKey: .beforeCursor)
+        if !selection.isEmpty { try c.encode(selection, forKey: .selection) }
+        if !afterCursor.isEmpty { try c.encode(afterCursor, forKey: .afterCursor) }
+        try c.encodeIfPresent(tags, forKey: .tags)
+        try c.encodeIfPresent(expect, forKey: .expect)
+    }
+
     public var formattingRequest: FormattingRequest {
         FormattingRequest(raw: raw, language: language, category: category, beforeCursor: beforeCursor)
+    }
+
+    public var commandRequest: CommandRequest {
+        CommandRequest(instruction: raw, selection: selection, beforeSelection: beforeCursor,
+                       afterSelection: afterCursor, category: category, language: language)
     }
 
     /// One case per non-empty line.
@@ -183,6 +239,41 @@ public struct EvalSummary: Sendable, Equatable {
 public enum Evaluation {
     /// Runs one case through a single model (no cascade: the point is to measure that model).
     public static func run(_ evalCase: EvalCase, model: any TextModel) async -> EvalRecord {
+        switch evalCase.task {
+        case .formatting: await runFormatting(evalCase, model: model)
+        case .command: await runCommand(evalCase, model: model)
+        }
+    }
+
+    /// Command Mode: the output is what would be pasted, empty when Command Mode
+    /// gives up (it never pastes the instruction).
+    static func runCommand(_ evalCase: EvalCase, model: any TextModel) async -> EvalRecord {
+        let recorder = RecordingTextModel(model)
+        let clock = ContinuousClock()
+        let start = clock.now
+        let result = await LanguageTasks.command(evalCase.commandRequest, models: [recorder])
+        let elapsed = clock.now - start
+
+        let call = recorder.call
+        let outcome: EvalOutcome
+        switch (result, call) {
+        case (.success, _): outcome = .accepted
+        case (.failure(.emptyInstruction), _): outcome = .skipped
+        case (.failure(.noModelAvailable), _): outcome = .unavailable
+        case (.failure(.outputRejected), .success?): outcome = .rejected
+        case (.failure(.outputRejected), _): outcome = .error
+        }
+        let modelOutput: String? = if case .success(let text)? = call { text } else { nil }
+        let output = (try? result.get())?.text ?? ""
+        let latency: Double? = call == nil ? nil
+            : Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
+        var record = EvalRecord(id: evalCase.id, input: evalCase, model: model.id, output: output,
+                                modelOutput: modelOutput, outcome: outcome, latencyMs: latency, failures: [])
+        record.failures = EvalRules.failures(for: record)
+        return record
+    }
+
+    static func runFormatting(_ evalCase: EvalCase, model: any TextModel) async -> EvalRecord {
         let recorder = RecordingTextModel(model)
         let clock = ContinuousClock()
         let start = clock.now
@@ -247,6 +338,7 @@ public enum EvalRules {
         case .unavailable: return ["model_unavailable"]
         case .accepted, .skipped: break
         }
+        if record.input.task == .command { return failures + commandFailures(for: record) }
         let raw = record.input.raw
         let text = record.modelOutput.map(TextHeuristics.stripModelWrapping) ?? record.output
 
@@ -257,18 +349,58 @@ public enum EvalRules {
         if let expected = record.input.language, let detected = dominantLanguage(text), detected != expected {
             failures.append("language_changed")
         }
-        if let expect = record.input.expect {
-            for s in expect.contains ?? [] where !text.contains(s) {
-                failures.append("expect_contains:\(s)")
-            }
-            for s in expect.notContains ?? [] where containsPhrase(text, s) {
-                failures.append("expect_not_contains:\(s)")
-            }
-            if let end = expect.endsWith, !text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix(end) {
-                failures.append("expect_ends_with:\(end)")
-            }
+        return failures + expectationFailures(record.input.expect, text: text)
+    }
+
+    static func expectationFailures(_ expect: EvalExpectations?, text: String) -> [String] {
+        guard let expect else { return [] }
+        var failures: [String] = []
+        for s in expect.contains ?? [] where !text.contains(s) {
+            failures.append("expect_contains:\(s)")
+        }
+        for s in expect.notContains ?? [] where containsPhrase(text, s) {
+            failures.append("expect_not_contains:\(s)")
+        }
+        if let end = expect.endsWith, !text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix(end) {
+            failures.append("expect_ends_with:\(end)")
+        }
+        if let max = expect.maxLength, text.count > max {
+            failures.append("expect_max_length:\(max)")
         }
         return failures
+    }
+
+    /// Command Mode checks, on the model's output with its wrapping stripped:
+    /// - empty_output: nothing left to paste.
+    /// - wrapped: the model added a preamble, quotes, tags or a code fence.
+    /// - language_changed: not in `expect.language`, else the selection's
+    ///   language, else the case's `language` (generation with no selection).
+    /// - unchanged: the selection came back as is.
+    /// - too_long / too_short: longer than Command Mode accepts, or under a
+    ///   tenth of the selection.
+    static func commandFailures(for record: EvalRecord) -> [String] {
+        let input = record.input
+        let modelOutput = record.modelOutput?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = modelOutput.map(TextHeuristics.stripCommandWrapping)
+            ?? record.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return ["empty_output"] }
+
+        var failures: [String] = []
+        if let modelOutput, text != modelOutput { failures.append("wrapped") }
+
+        let selection = input.selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedLanguage = input.expect?.language
+            ?? (selection.isEmpty ? input.language : dominantLanguage(selection))
+        if let expectedLanguage, let detected = dominantLanguage(text), detected != expectedLanguage {
+            failures.append("language_changed")
+        }
+        if !selection.isEmpty, text == selection { failures.append("unchanged") }
+        if text.count > LanguageTasks.commandMaxLength(input.commandRequest, hasSelection: !selection.isEmpty) {
+            failures.append("too_long")
+        } else if !selection.isEmpty, text.count < selection.count / 10 {
+            failures.append("too_short")
+        }
+        return failures + expectationFailures(input.expect, text: text)
     }
 
     /// Case-insensitive, on word boundaries.
