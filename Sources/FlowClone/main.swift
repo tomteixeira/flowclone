@@ -46,7 +46,8 @@ if let i = CommandLine.arguments.firstIndex(of: "--transcribe"), i + 1 < Command
     RunLoop.main.run()
 }
 
-//   FlowClone --eval <corpus.jsonl> [--engine apple] [--out <file.jsonl>]   → formatting evaluation
+//   FlowClone --eval <corpus.jsonl> [--engine apple|qwen3-1.7b|org/name] [--out <file.jsonl>]   → formatting evaluation
+//   (--engine defaults to FLOWCLONE_LLM, then apple)
 if CommandLine.arguments.contains("--eval") {
     Task { @MainActor in exit(await EvalCommand.run(arguments: CommandLine.arguments)) }
     RunLoop.main.run()

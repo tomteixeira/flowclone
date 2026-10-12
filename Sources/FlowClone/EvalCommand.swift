@@ -2,28 +2,36 @@ import FlowCore
 import Foundation
 
 /// Developer evaluation of the formatting step, no UI or permissions needed:
-///   FlowClone --eval <corpus.jsonl> [--engine apple] [--out <file.jsonl>]
+///   FlowClone --eval <corpus.jsonl> [--engine <model>] [--out <file.jsonl>]
+/// `<model>` is anything `FLOWCLONE_LLM` accepts (apple, qwen3-1.7b, qwen3-4b,
+/// org/name[@revision]); `--engine` wins over `FLOWCLONE_LLM`, default apple.
 /// Runs every case through `Evaluation` with one model, writes one JSON record
 /// per case and prints a summary. See the README, "Evaluating the formatting step".
 enum EvalCommand {
-    /// The language models the harness can run, by command-line name.
-    /// Any `TextModel` can be added here (MLX models come with ticket 04).
+    /// The language model the harness runs, by command-line name: "apple", an
+    /// alias ("qwen3-1.7b", "qwen3-4b") or a Hugging Face repo id (MLX).
+    /// Nil for "off" or a name the factory doesn't know.
     static func textModel(named name: String) -> (any TextModel)? {
-        switch name {
-        case "apple": AppleTextModel()
-        default: nil
-        }
+        try? TextModels.make(id: name)
+    }
+
+    /// `--engine`, else `FLOWCLONE_LLM`, else Apple's model.
+    static func engineName(arguments: [String], environment: [String: String]) -> String {
+        if let i = arguments.firstIndex(of: "--engine"), i + 1 < arguments.count { return arguments[i + 1] }
+        if let value = environment[LanguageModelOverride.environmentKey]?.trimmingCharacters(in: .whitespaces),
+           !value.isEmpty { return value }
+        return "apple"
     }
 
     static func run(arguments: [String]) async -> Int32 {
         guard let i = arguments.firstIndex(of: "--eval"), i + 1 < arguments.count else {
-            return fail("usage: FlowClone --eval <corpus.jsonl> [--engine apple] [--out <file.jsonl>]")
+            return fail("usage: FlowClone --eval <corpus.jsonl> [--engine <apple|qwen3-1.7b|qwen3-4b|org/name[@rev]>] [--out <file.jsonl>]")
         }
         func option(_ flag: String) -> String? {
             arguments.firstIndex(of: flag).flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil }
         }
         let corpusPath = arguments[i + 1]
-        let engine = option("--engine") ?? "apple"
+        let engine = engineName(arguments: arguments, environment: ProcessInfo.processInfo.environment)
         let outPath = option("--out") ?? "eval-\(engine.replacingOccurrences(of: "/", with: "_")).jsonl"
 
         guard let model = textModel(named: engine) else { return fail("unknown engine: \(engine)") }
@@ -37,11 +45,21 @@ enum EvalCommand {
             return fail("engine \(engine) is unavailable (Apple Intelligence off, or model not downloaded)")
         }
 
-        // Load time: a first tiny call, which brings the model into memory.
+        // Load time, measured before the timed cases so they don't pay for it.
         let clock = ContinuousClock()
         let warmStart = clock.now
-        _ = try? await model.generate(instructions: "Reply with OK.", prompt: "OK",
-                                      options: TextGenerationOptions(maxTokens: 4))
+        if let mlx = model as? MLXTextModel {
+            // Download (first run only), load and kernel warm-up.
+            do {
+                try await mlx.load { stderr("llm: downloading \(Int($0 * 100))%") }
+            } catch {
+                return fail("can't load \(mlx.id): \(error)")
+            }
+        } else {
+            // A first tiny call, which brings the model into memory.
+            _ = try? await model.generate(instructions: "Reply with OK.", prompt: "OK",
+                                          options: TextGenerationOptions(maxTokens: 4))
+        }
         let loadTime = milliseconds(clock.now - warmStart)
 
         var records: [EvalRecord] = []

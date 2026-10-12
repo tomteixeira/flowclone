@@ -32,9 +32,11 @@ swift build && .build/debug/FlowClone --eval eval/formatting-corpus.jsonl --engi
 ```
 Runs every case of a corpus (JSONL) through the FlowCore formatting module with one model, writes one JSON
 record per case (`input`, `output` as pasted, verbatim `modelOutput`, `model`, `outcome`, `latencyMs`, `failures`)
-and prints p50/p95 latency, load time (a first warm-up call), peak memory of the process (Apple's model runs
+and prints p50/p95 latency, load time (a first warm-up call; for MLX models, download + load + kernel warm-up), peak memory of the process (Apple's model runs
 out of process, so only in-process models show up there), guard pass rate and rule-check failures. Per-case
-progress goes to stderr. `--engine` takes `apple` for now; any `TextModel` can be added in `EvalCommand.textModel`.
+progress goes to stderr. `--engine` takes what `FLOWCLONE_LLM` takes (`apple`, `qwen3-1.7b`, `qwen3-4b` or a Hugging
+Face repo id `org/name[@revision]`, run with MLX) and defaults to `FLOWCLONE_LLM`, then `apple`. MLX models need
+`scripts/build-mlx-metallib.sh` once after building, which puts `mlx.metallib` next to the binary.
 
 A corpus line needs `id` and `raw`; `language`, `category` (`email`, `chat`, `code`, `document`, `other`),
 `beforeCursor`, `tags` and `expect` are optional. `expect` holds `contains` (case-sensitive substrings),
@@ -44,7 +46,7 @@ is one, even if the guards rejected it: `guards_rejected`, `model_error`, `model
 
 `eval/formatting-corpus.jsonl` holds 80 hand-written cases (40 French, 40 English: fillers, self-corrections,
 questions, command-like dictations, emails, chat, code, proper nouns, very short inputs).
-`eval/baselines/` holds the Apple baseline (`apple.jsonl`, `apple.summary.txt`). Judge an output file
+`eval/baselines/` holds the Apple and Qwen3 1.7B baselines (`<engine>.jsonl`, `<engine>.summary.txt`). Judge an output file
 qualitatively by asking Claude Code to read it in a session.
 
 ## How it maps to Wispr Flow
