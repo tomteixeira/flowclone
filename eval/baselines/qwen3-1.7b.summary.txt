@@ -1,0 +1,54 @@
+Qwen3 1.7B (MLX, mlx-community/Qwen3-1.7B-4bit) baseline on eval/formatting-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding, thinking off.
+Prompt: same formatting prompt as the Apple baseline (with French examples, ticket 03).
+Command: .build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine qwen3-1.7b --out eval/baselines/qwen3-1.7b.jsonl
+
+engine: mlx-community/Qwen3-1.7B-4bit
+output: eval/baselines/qwen3-1.7b.jsonl
+cases: 80 (accepted 65, rejected 9, skipped 6)
+latency p50: 280 ms, p95: 769 ms
+load time: 3062 ms, peak memory: 393 MB
+guard pass rate: 88%
+rule-check failures: 45 in 24 cases
+  expect_not_contains: 16
+  guards_rejected: 9
+  expect_ends_with: 8
+  expect_contains: 7
+  answered_question: 4
+  language_changed: 1
+
+Notes
+- Load time is MLXTextModel.load from the local cache (no download): weights + kernel JIT warm-up. Single run, not averaged.
+- Peak memory is FlowClone's own process, which here includes the model (in-process MLX), unlike the Apple baseline.
+- Faster than Apple (p50 280 vs 639 ms, Apple measured on a debug build) but roughly twice the rule-check failures.
+- Recurring failure modes: turning questions into statements (drops the "?", 8 cases, 4 also caught as answered_question
+  and rejected), keeping both sides of a self-correction ("wait no", "scratch that", "non pardon", "I mean") or
+  keeping the wrong side (en-correction-2, fr-correction-1), keeping fillers ("you know", "genre", "tu vois"),
+  echoing the before-cursor text (en/fr-email-5, en/fr-code-2), and over-shortening chat messages so the meaning
+  changes (fr-chat-2, fr-chat-3).
+
+Failing cases
+en-filler-2: expect_not_contains:you know
+en-correction-2: expect_contains:Sarah, expect_not_contains:John
+en-correction-3: guards_rejected, expect_not_contains:50,000, expect_not_contains:wait no
+en-correction-4: expect_not_contains:Monday, expect_not_contains:scratch that
+en-correction-5: guards_rejected, answered_question, expect_not_contains:I mean, expect_ends_with:?
+en-question-2: guards_rejected, answered_question, expect_ends_with:?
+en-email-5: guards_rejected, expect_contains:slides, expect_not_contains:Hi David
+en-chat-4: expect_ends_with:?
+en-code-2: guards_rejected, expect_contains:TODO
+en-long-1: expect_not_contains:Monday
+fr-filler-2: expect_not_contains:genre, expect_not_contains:tu vois
+fr-filler-3: expect_not_contains:genre
+fr-correction-1: expect_contains:15, expect_not_contains:14h
+fr-correction-5: expect_ends_with:?
+fr-question-4: guards_rejected, answered_question, expect_ends_with:?
+fr-question-5: guards_rejected, answered_question, expect_ends_with:?
+fr-email-3: expect_not_contains:non pardon
+fr-email-5: guards_rejected, expect_not_contains:Bonjour David
+fr-chat-2: expect_contains:retard
+fr-chat-3: expect_contains:déploiement
+fr-chat-4: expect_ends_with:?
+fr-code-2: guards_rejected, language_changed, expect_contains:TODO
+fr-noun-2: expect_ends_with:?
+fr-long-1: expect_not_contains:lundi
