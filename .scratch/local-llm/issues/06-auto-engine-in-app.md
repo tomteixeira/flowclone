@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 (MLX adapter + Qwen3 1.7B)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Qwen 1.7B downloads on first launch alongside the speech model; progress shown in the setup window or menu; failures retry
 - [x] Until the model is ready, formatting uses the next engine in the cascade (no waiting on a download)
@@ -22,3 +22,13 @@
 - Key-down preloads Qwen only when the cascade would reach it (with `autoOrder` = Apple first: only when Apple Intelligence is unavailable). If ticket 05 flips `autoOrder`, Qwen preloads on every dictation.
 - Ticket 08: pass `[LocalModels.formatting, LocalModels.commandMode]` to `LocalModelManager`, call `prepare(LocalModels.commandMode)` on mode change, and put `localModels.model(for: LocalModels.commandMode)` ahead of Apple in `commandModels`.
 - Not yet checked by hand: the manual check with Apple Intelligence disabled, download progress in the setup window and menu, idle unload.
+
+## Comments
+
+Merged into `local-llm`; `swift build`, `swift test` (116 tests, 0 failures) and `scripts/build-app.sh` pass. Not yet verified in the running app:
+
+- Cleanup by Qwen with Apple Intelligence disabled
+- Download progress shown in the setup window and the menu
+- Retry after a failed download
+- 15-minute idle unload, then reload on the next dictation
+- Tuning of the 0.75 s wait budget for an in-progress load
