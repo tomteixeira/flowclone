@@ -1,0 +1,36 @@
+Apple foundation model, Command Mode baseline on eval/command-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding.
+Prompt: Command Mode prompt from ticket 07 (LanguageTasks.command).
+Command: .build/release/FlowClone --eval eval/command-corpus.jsonl --engine apple --out eval/baselines/command-apple.jsonl
+
+engine: apple
+output: eval/baselines/command-apple.jsonl
+cases: 35 (accepted 35)
+latency p50: 518 ms, p95: 909 ms
+load time: 2022 ms, peak memory: 26 MB
+guard pass rate: 100%
+rule-check failures: 9 in 9 cases
+  wrapped: 4
+  expect_contains: 2
+  expect_not_contains: 2
+  expect_max_length: 1
+
+Notes
+- Peak memory is FlowClone's own process; Apple's model runs in a system daemon and isn't counted.
+- Every output passed Command Mode's guards; the `wrapped` outputs were pasted correctly because the
+  stripping caught them: the model echoes the prompt's tags (<selection>...</selection> on translations,
+  <after>...</after> when generating at the cursor).
+- Real quality misses: en-summarize-3 ("tldr this") returned the selection lightly edited instead of a summary;
+  en-summarize-1 dropped the dashboard point; en-grammar-2 left "its"/"friday" uncorrected; fr-grammar-2 kept
+  "malgrés"; fr-reply-3 replied as if it were Clara, repeating "Bonjour Tom" and Clara's sign-off.
+
+Failing cases
+en-translate-1: wrapped
+en-translate-3: wrapped
+en-summarize-1: expect_contains:dashboard
+en-summarize-3: expect_max_length:200
+en-grammar-2: expect_contains:Friday
+fr-grammar-2: expect_not_contains:malgrés
+fr-generate-3: wrapped
+en-reply-1: wrapped
+fr-reply-3: expect_not_contains:Bonjour Tom

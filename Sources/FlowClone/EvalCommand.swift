@@ -1,7 +1,8 @@
 import FlowCore
 import Foundation
 
-/// Developer evaluation of the formatting step, no UI or permissions needed:
+/// Developer evaluation of the language tasks (formatting, and Command Mode for
+/// cases with `"task":"command"`), no UI or permissions needed:
 ///   FlowClone --eval <corpus.jsonl> [--engine <model>] [--out <file.jsonl>]
 /// `<model>` is anything `FLOWCLONE_LLM` accepts (apple, qwen3-1.7b, qwen3-4b,
 /// org/name[@revision]); `--engine` wins over `FLOWCLONE_LLM`, default apple.
@@ -37,7 +38,7 @@ enum EvalCommand {
         guard let model = textModel(named: engine) else { return fail("unknown engine: \(engine)") }
         let cases: [EvalCase]
         do {
-            cases = try EvalCase.decodeJSONL(String(contentsOfFile: corpusPath, encoding: .utf8))
+            cases = try EvalCase.decodeCorpus(String(contentsOfFile: corpusPath, encoding: .utf8))
         } catch {
             return fail("can't read corpus \(corpusPath): \(error)")
         }

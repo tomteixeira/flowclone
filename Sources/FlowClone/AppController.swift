@@ -61,16 +61,32 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// Wispr debounces accidental taps (DICTATION_DEBOUNCE_DELAY).
     private let minimumHold: TimeInterval = 0.3
-    private var cleanupEnabled: Bool {
-        get { defaults.object(forKey: "cleanup") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "cleanup") }
-    }
-    /// Until the local model lands (and the Formatting menu with it), the cleanup
-    /// toggle maps to Apple's model or nothing.
-    private var formattingEngine: FormattingEngine { cleanupEnabled ? .apple : .off }
     private let appleModel = AppleTextModel()
-    /// Command Mode cascade, best first. Qwen 4B goes in front once it ships (ticket 08).
-    private var commandModels: [any TextModel] { [appleModel] }
+    /// `FLOWCLONE_LLM`: forces one language model (or none) for formatting and
+    /// Command Mode, bypassing the Formatting menu.
+    private let llmOverride: LanguageModelOverride? = {
+        do { return try TextModels.override() } catch {
+            log.error("\(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }()
+    /// Which local model formatting and Command Mode each use.
+    private lazy var localPlan = LocalModelPlan(override: llmOverride)
+    /// Local models: download at launch (1.7B, then 4B), load on key-down
+    /// (formatting) or Shift (Command Mode), unload each when idle.
+    private lazy var localModels = LocalModelManager(specs: localPlan.downloads, policy: localPlan.policy(for:))
+    private let textModelLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let commandModelLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    /// Opt-in, off by default: log each formatting and Command Mode run locally.
+    private var journalEnabled: Bool {
+        get { defaults.bool(forKey: "journal") }
+        set { defaults.set(newValue, forKey: "journal") }
+    }
+    /// Command Mode cascade, best first: Qwen 4B, then Apple. A local model that
+    /// isn't loaded (or about to be) reports itself unavailable.
+    private var commandModels: [any TextModel] {
+        localPlan.commandCandidates(local: localPlan.command.flatMap { localModels.model(for: $0) }, apple: appleModel)
+    }
     private var languages: [String] {
         get {
             if let saved = defaults.stringArray(forKey: "languages") { return saved }
@@ -99,7 +115,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .loading
         setStatus("Preparing speech model…")
 
-        hotkey.onPress = { [weak self] in Task { @MainActor in self?.keyDown() } }
+        hotkey.onPress = { [weak self] mode in Task { @MainActor in self?.keyDown(mode: mode) } }
         hotkey.onModeChanged = { [weak self] mode in Task { @MainActor in self?.modeChanged(mode) } }
         hotkey.onRelease = { [weak self] mode in Task { @MainActor in await self?.keyUp(mode: mode) } }
         hotkey.onInterrupt = { [weak self] in Task { @MainActor in await self?.shortcutInterrupted() } }
@@ -117,6 +133,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             try? SMAppService.mainApp.register()
         }
         rebuildMenu()
+        startLocalModels()
 
         Task {
             await requestPermissions()
@@ -195,7 +212,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     // MARK: Pipeline
 
-    private func keyDown() {
+    private func keyDown(mode: SessionMode) {
         log.info("hotkey down (state: \(String(describing: self.state), privacy: .public))")
         setup.hotkeySeen = true
         guard state == .idle, let session = makeSession() else {
@@ -208,6 +225,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         pressedAt = Date()
         hud.model.commandMode = false
         state = .recording
+        // With Shift already held this is Command Mode: `modeChanged` loads its model instead.
+        if mode == .dictation { preloadFormattingModel() }
         // Delay the start sound so quick shortcuts using the hotkey (⌘C) stay silent.
         Task {
             try? await Task.sleep(for: .seconds(minimumHold))
@@ -236,6 +255,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
         log.info("session mode: \(String(describing: mode), privacy: .public)")
         hud.model.commandMode = mode == .command
+        if mode == .command, let spec = localPlan.command { localModels.prepare(spec) }
     }
 
     private func keyUp(mode: SessionMode) async {
@@ -271,7 +291,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             let request = FormattingRequest(raw: transcript.text, language: transcript.language,
                                             category: context.category, beforeCursor: context.beforeText)
-            let text = await LanguageTasks.format(request, models: formattingEngine.candidates(local: nil, apple: appleModel)).text
+            let formatStarted = Date()
+            let result = await LanguageTasks.format(request, models: formattingModels)
+            log.info("formatted via \(result.modelID ?? "none (raw)", privacy: .public) in \(Date().timeIntervalSince(formatStarted), format: .fixed(precision: 2))s")
+            let text = result.text
+            journal(.formatting(FormattingJournalEntry(
+                date: formatStarted, raw: request.raw, formatted: text, language: request.language,
+                category: request.category, model: result.modelID,
+                latencyMs: Date().timeIntervalSince(formatStarted) * 1000, beforeCursor: request.beforeCursor)))
             let insert = TextHeuristics.withLeadingSpaceIfNeeded(text, before: context.beforeText)
             lastTranscript = text
             paste(insert)
@@ -288,7 +315,11 @@ final class AppController: NSObject, NSApplicationDelegate {
                                      beforeSelection: context.beforeText, afterSelection: context.afterText,
                                      category: context.category, language: transcript.language)
         let started = Date()
-        switch await LanguageTasks.command(request, models: commandModels) {
+        let outcome = await LanguageTasks.command(request, models: commandModels)
+        journal(.command(CommandJournalEntry(request, date: started, result: try? outcome.get().text,
+                                             model: try? outcome.get().modelID,
+                                             latencyMs: Date().timeIntervalSince(started) * 1000)))
+        switch outcome {
         case .success(let result):
             log.info("command: \(result.action == .replaceSelection ? "replace" : "insert", privacy: .public) \(result.text.count) chars via \(result.modelID, privacy: .public) in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s")
             lastTranscript = result.text
@@ -306,6 +337,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             hud.show(.message(message), autoHideAfter: 2.5)
             NSSound(named: "Basso")?.play()
         }
+    }
+
+    /// Appends to the dictation journal, only when the user opted in.
+    private func journal(_ record: JournalRecord) {
+        guard journalEnabled else { return }
+        JournalFile.append(record)
     }
 
     private func paste(_ text: String) {
@@ -422,6 +459,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         engineLine.isEnabled = false
         menu.addItem(statusLine)
         menu.addItem(engineLine)
+        textModelLine.isEnabled = false
+        menu.addItem(textModelLine)
+        commandModelLine.isEnabled = false
+        if let command = localPlan.command, command != formattingSpec { menu.addItem(commandModelLine) }
         menu.addItem(.separator())
 
         let languageMenu = NSMenu()
@@ -448,13 +489,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         engineItem.submenu = engineMenu
         menu.addItem(engineItem)
 
-        let appleAvailable = appleModel.isAvailable
-        let cleanup = NSMenuItem(title: appleAvailable ? "AI cleanup (on-device)" : "AI cleanup (Apple Intelligence off)",
-                                 action: #selector(toggleCleanup), keyEquivalent: "")
-        cleanup.target = self
-        cleanup.state = cleanupEnabled && appleAvailable ? .on : .off
-        cleanup.isEnabled = appleAvailable
-        menu.addItem(cleanup)
+        menu.addItem(formattingMenuItem())
 
         let hotkeyMenu = NSMenu()
         for key in HotkeyMonitor.Key.allCases {
@@ -486,11 +521,20 @@ final class AppController: NSObject, NSApplicationDelegate {
         copyLast.target = self
         menu.addItem(copyLast)
 
+        let keepJournal = NSMenuItem(title: "Keep dictation journal", action: #selector(toggleJournal), keyEquivalent: "")
+        keepJournal.target = self
+        keepJournal.state = journalEnabled ? .on : .off
+        menu.addItem(keepJournal)
+        let clearJournal = NSMenuItem(title: "Clear journal", action: #selector(clearJournal), keyEquivalent: "")
+        clearJournal.target = self
+        menu.addItem(clearJournal)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit FlowClone", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
         refreshIcon()
         engineChanged()
+        textModelChanged()
     }
 
     @objc private func toggleLanguage(_ sender: NSMenuItem) {
@@ -516,9 +560,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         Task { await engine.load() } // downloads on first use; Apple's engine covers the wait
     }
 
-    @objc private func toggleCleanup() {
-        cleanupEnabled.toggle()
+
+    @objc private func toggleJournal() {
+        journalEnabled.toggle()
         rebuildMenu()
+    }
+
+    @objc private func clearJournal() {
+        JournalFile.clear()
     }
 
     @objc private func toggleLogin() {
@@ -547,6 +596,94 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard let lastTranscript else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lastTranscript, forType: .string)
+    }
+}
+
+// MARK: - Formatting engine (Auto / Apple / Off) and the local formatting model
+
+extension AppController {
+    private var formattingEngine: FormattingEngine {
+        get {
+            FormattingEngine.fromSettings(stored: defaults.string(forKey: "formatting"),
+                                          legacyCleanup: defaults.object(forKey: "cleanup") as? Bool)
+        }
+        set { defaults.set(newValue.rawValue, forKey: "formatting") }
+    }
+
+    private var formattingSpec: LocalModelSpec {
+        localPlan.formatting ?? LocalModels.formatting
+    }
+
+    /// Cascade order for this dictation. A local model that isn't loaded (or about
+    /// to be) reports itself unavailable, so the cascade moves on without waiting.
+    private var formattingModels: [any TextModel] {
+        let local = localModels.model(for: formattingSpec)
+        switch llmOverride {
+        case .apple?: return [appleModel]
+        case .off?: return []
+        case .local?: return local.map { [$0] } ?? []
+        case nil: return formattingEngine.candidates(local: local, apple: appleModel)
+        }
+    }
+
+    private func startLocalModels() {
+        if let llmOverride { log.info("FLOWCLONE_LLM override: \(String(describing: llmOverride), privacy: .public)") }
+        localModels.onChange = { [weak self] in self?.textModelChanged() }
+        localModels.start()
+    }
+
+    /// Key-down: start loading the formatting model so it overlaps with the recording.
+    private func preloadFormattingModel() {
+        let needed = switch llmOverride {
+        case .local?: true
+        case .apple?, .off?: false
+        case nil: formattingEngine.preloadsLocal(appleAvailable: appleModel.isAvailable)
+        }
+        if needed { localModels.prepare(formattingSpec) }
+    }
+
+    private func textModelChanged() {
+        let name = formattingSpec == LocalModels.formatting ? "Qwen3 1.7B"
+            : String(formattingSpec.id.split(separator: "/").last ?? "")
+        let text = localModels.statusText(for: formattingSpec, name: name)
+        textModelLine.title = text
+        if let command = localPlan.command, command != formattingSpec {
+            let name = command == LocalModels.commandMode ? "Qwen3 4B" : String(command.id.split(separator: "/").last ?? "")
+            commandModelLine.title = localModels.statusText(for: command, name: "Command Mode \(name)",
+                                                            loadsWhen: "you hold Shift")
+        }
+        setup.textModelStatus = text
+        setup.textModelReady = switch localModels.model(for: formattingSpec)?.state?.phase {
+        case .downloaded?, .loading?, .loaded?: true
+        default: false
+        }
+    }
+
+    private func formattingMenuItem() -> NSMenuItem {
+        let appleLabel = appleModel.isAvailable ? "Apple" : "Apple (Apple Intelligence off)"
+        let choices: [(FormattingEngine, String)] = [
+            (.auto, "Auto — on-device models, best available"),
+            (.apple, appleLabel),
+            (.off, "Off — paste the raw transcript"),
+        ]
+        let submenu = NSMenu()
+        for (engine, title) in choices {
+            let item = NSMenuItem(title: title, action: #selector(selectFormatting(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = engine.rawValue
+            item.state = engine == formattingEngine ? .on : .off
+            submenu.addItem(item)
+        }
+        let item = NSMenuItem(title: llmOverride == nil ? "Formatting" : "Formatting (FLOWCLONE_LLM overrides)",
+                              action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func selectFormatting(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let engine = FormattingEngine(rawValue: raw) else { return }
+        formattingEngine = engine
+        rebuildMenu()
     }
 }
 

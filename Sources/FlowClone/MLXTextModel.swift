@@ -4,6 +4,7 @@ import HuggingFace
 import MLX
 import MLXLLM  // registers the LLM model factory (qwen3...); without it loading fails
 import MLXLMCommon
+import Synchronization
 import Tokenizers
 
 /// Where FlowClone keeps downloaded models (speech and language), easy to find and delete.
@@ -25,24 +26,116 @@ enum ModelsDirectory {
 final class MLXTextModel: TextModel {
     let spec: LocalModelSpec
     var id: String { spec.id }
-    /// Download and residency are managed by the caller (ticket 06's model
-    /// manager); until then the model is always offered and loads on first use.
-    var isAvailable: Bool { true }
+
+    /// Unmanaged (CLI, eval harness): always offered, downloads and loads on
+    /// first use. Managed (the app's `LocalModelManager`): offered only when
+    /// loaded, or when a load in progress should finish within the wait budget.
+    var isAvailable: Bool {
+        guard managed else { return true }
+        return residency.withLock { $0.readiness(at: Date()) } != .unavailable
+    }
+
+    /// The managed lifecycle state; nil when unmanaged.
+    var state: LocalModelResidency? { managed ? residency.withLock { $0 } : nil }
+
+    struct Unavailable: Error {}
 
     private let loader: Loader
+    /// Only meaningful (and only updated) when `managed`.
+    private let residency: Mutex<LocalModelResidency>
+    private let managed: Bool
+    private let onChange: @Sendable () -> Void
 
     init(_ spec: LocalModelSpec) {
         self.spec = spec
         self.loader = Loader(spec: spec)
+        self.residency = Mutex(LocalModelResidency())
+        self.managed = false
+        self.onChange = {}
+    }
+
+    /// A model whose download and residency are driven by `LocalModelManager`.
+    /// `onChange` runs (on any thread) after every lifecycle change.
+    init(_ spec: LocalModelSpec, policy: ResidencyPolicy, onChange: @Sendable @escaping () -> Void) {
+        self.spec = spec
+        self.loader = Loader(spec: spec)
+        self.residency = Mutex(LocalModelResidency(policy: policy))
+        self.managed = true
+        self.onChange = onChange
+    }
+
+    /// Fetches the weights without loading them (no network once cached at a pinned revision).
+    func download() async throws {
+        let hub = HubClient(cache: HubCache(cacheDirectory: ModelsDirectory.huggingFace))
+        do {
+            _ = try await HubDownloader(hub: hub).download(
+                id: spec.id, revision: spec.revision, matching: ["*.safetensors", "*.json", "*.jinja"],
+                useLatest: false, progressHandler: { [weak self] progress in
+                    self?.update { $0.downloadProgressed(progress.fractionCompleted) }
+                })
+            update { $0.downloadFinished() }
+        } catch {
+            update { $0.downloadFailed(error.localizedDescription) }
+            throw error
+        }
     }
 
     /// Downloads (first run only) and loads the weights. `generate` does this
-    /// lazily; call it to warm up or to time loading separately.
+    /// lazily when unmanaged; call it to warm up or to time loading separately.
     func load(progress: @Sendable @escaping (Double) -> Void = { _ in }) async throws {
-        _ = try await loader.container(progress: progress)
+        update { $0.loadStarted(at: Date()) }
+        do {
+            _ = try await loader.container(progress: progress)
+            update { $0.loadFinished(at: Date()) }
+        } catch {
+            update { $0.loadFailed() }
+            throw error
+        }
+    }
+
+    /// Releases the weights if the model sat idle past the policy's timeout.
+    @discardableResult
+    func unloadIfIdle(now: Date = Date()) async -> Bool {
+        guard managed, residency.withLock({ $0.shouldUnload(at: now) }) else { return false }
+        await loader.unload()
+        update { $0.unloaded() }
+        return true
+    }
+
+    private func update(_ change: (inout LocalModelResidency) -> Void) {
+        guard managed else { return }
+        residency.withLock { change(&$0) }
+        onChange()
     }
 
     func generate(instructions: String, prompt: String, options: TextGenerationOptions) async throws -> String {
+        if managed {
+            // Decide and mark the use atomically so an idle unload can't slip in between.
+            let readiness = residency.withLock { state -> LocalModelReadiness in
+                let readiness = state.readiness(at: Date())
+                if readiness != .unavailable { state.useBegan() }
+                return readiness
+            }
+            if case .wait(let budget) = readiness {
+                // The load runs in its own task; poll rather than await it so the
+                // cascade gives up on time.
+                let deadline = Date().addingTimeInterval(budget)
+                while residency.withLock({ $0.phase }) != .loaded, Date() < deadline, !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(20))
+                }
+                if residency.withLock({ $0.phase }) != .loaded {
+                    update { $0.useEnded(at: Date()) }
+                    throw Unavailable()
+                }
+            } else if readiness == .unavailable {
+                throw Unavailable()
+            }
+        }
+        defer { update { $0.useEnded(at: Date()) } }
+        return try await run(instructions: instructions, prompt: prompt, options: options)
+    }
+
+    private func run(instructions: String, prompt: String, options: TextGenerationOptions) async throws -> String {
         let container = try await loader.container(progress: { _ in })
         // Qwen3 thinking off: the chat template then pre-fills an empty <think></think>.
         let input = UserInput(chat: [.system(instructions), .user(prompt)],
@@ -68,6 +161,13 @@ final class MLXTextModel: TextModel {
         private var loading: Task<ModelContainer, Error>?
 
         init(spec: LocalModelSpec) { self.spec = spec }
+
+        /// Drops the weights; generations already running keep their own reference.
+        func unload() {
+            loaded = nil
+            loading = nil
+            Memory.clearCache()
+        }
 
         func container(progress: @Sendable @escaping (Double) -> Void) async throws -> ModelContainer {
             if let loaded { return loaded }
