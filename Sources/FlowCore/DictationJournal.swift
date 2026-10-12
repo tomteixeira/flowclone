@@ -167,8 +167,10 @@ extension EvalCase {
     /// any mix. A line with a `kind` key is a journal record.
     public static func decodeCorpus(_ text: String) throws -> [EvalCase] {
         try JSONL.lines(text).map { line in
-            if line.contains(#""kind""#), let record = try? JournalRecord.decode(line) { return record.evalCase }
-            return try EvalCase.decode(line)
+            let probe = try JSONDecoder().decode(KindProbe.self, from: Data(line.utf8))
+            return probe.kind == nil ? try EvalCase.decode(line) : try JournalRecord.decode(line).evalCase
         }
     }
+
+    private struct KindProbe: Decodable { var kind: String? }
 }

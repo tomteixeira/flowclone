@@ -3,7 +3,7 @@ import Foundation
 /// Coarse category of the app being dictated into. Wispr Flow does the same:
 /// its formatter picks a different model for email (`app_type`), and its main
 /// bundle ships hard-coded bundle-ID lists (Mail, Outlook, Slack, VS Code...).
-public enum AppCategory: String, Sendable {
+public enum AppCategory: String, Codable, Sendable {
     case email, chat, code, document, other
 
     public static func from(bundleID: String?) -> AppCategory {

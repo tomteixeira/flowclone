@@ -1,8 +1,6 @@
 import Foundation
 import NaturalLanguage
 
-extension AppCategory: Codable {}
-
 /// Which language task a corpus case exercises; journal records (ticket 10)
 /// convert into these cases.
 public enum EvalTask: String, Codable, Sendable {

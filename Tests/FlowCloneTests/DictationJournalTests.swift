@@ -65,6 +65,14 @@ final class DictationJournalTests: XCTestCase {
         XCTAssertEqual(evalCase.tags, ["journal"])
     }
 
+    func testMalformedJournalLineInACorpusReportsWhatIsWrongWithIt() {
+        let line = #"{"kind":"formatting","date":1760000000250,"formatted":"Hi.","category":"chat","latencyMs":10,"beforeCursor":""}"#
+        XCTAssertThrowsError(try EvalCase.decodeCorpus(line)) { error in
+            guard case DecodingError.keyNotFound(let key, _) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(key.stringValue, "raw")
+        }
+    }
+
     func testCorpusMixesJournalLinesAndHandWrittenCases() throws {
         let corpus = try formatting.jsonLine() + "\n" + command.jsonLine() + "\n"
             + #"{"id":"en-1","raw":"hello there","language":"en"}"# + "\n"
