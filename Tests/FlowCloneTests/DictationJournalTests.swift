@@ -43,14 +43,21 @@ final class DictationJournalTests: XCTestCase {
         XCTAssertEqual(cases.first?.expect, EvalExpectations(notContains: ["um"]))
     }
 
-    func testCommandRecordsAreNotEvalCasesYet() {
-        XCTAssertNil(command.evalCase)
+    func testCommandRecordBecomesACommandModeEvalCase() throws {
+        let evalCase = try XCTUnwrap(command.evalCase)
+        XCTAssertEqual(evalCase.id, "journal-1760000000250")
+        XCTAssertEqual(evalCase.task, .command)
+        XCTAssertEqual(evalCase.commandRequest, CommandRequest(
+            instruction: "make this more formal", selection: "hey can u send it", beforeSelection: "Hi Tom,\n",
+            afterSelection: "\nThanks", category: .email, language: "en"))
+        XCTAssertEqual(evalCase.tags, ["journal"])
     }
 
     func testCorpusMixesJournalLinesAndHandWrittenCases() throws {
         let corpus = try formatting.jsonLine() + "\n" + command.jsonLine() + "\n"
             + #"{"id":"en-1","raw":"hello there","language":"en"}"# + "\n"
         let cases = try EvalCase.decodeCorpus(corpus)
-        XCTAssertEqual(cases.map(\.id), ["journal-1760000000250", "en-1"])
+        XCTAssertEqual(cases.map(\.id), ["journal-1760000000250", "journal-1760000000250", "en-1"])
+        XCTAssertEqual(cases.map(\.task), [.formatting, .command, .formatting])
     }
 }

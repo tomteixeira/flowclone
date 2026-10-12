@@ -52,9 +52,24 @@ qualitatively by asking Claude Code to read it in a session.
 Real dictations: turn on "Keep dictation journal" in the menu (off by default) and every formatting and Command
 Mode run is appended to `~/Library/Application Support/FlowClone/journal.jsonl` (local only; "Clear journal"
 deletes it). The journal, or any subset of its lines (`grep`, `tail`...), is a valid corpus, and can be mixed with
-hand-written cases: `--eval ~/Library/Application\ Support/FlowClone/journal.jsonl`. Formatting records replay as
-cases with id `journal-<epoch ms>` and tag `journal`; add an `expect` object to a line by hand to get rule checks.
-Command Mode records are skipped until the harness runs Command Mode cases.
+hand-written cases: `--eval ~/Library/Application\ Support/FlowClone/journal.jsonl`. Records replay as cases with
+id `journal-<epoch ms>` and tag `journal` (Command Mode records as Command Mode cases, below); add an `expect`
+object to a line by hand to get rule checks.
+
+### Command Mode cases
+```sh
+swift build -c release && scripts/build-mlx-metallib.sh
+.build/release/FlowClone --eval eval/command-corpus.jsonl --engine qwen3-4b --out eval-command-qwen3-4b.jsonl
+```
+A line with `"task":"command"` runs through `LanguageTasks.command`: `instruction` (or `raw`) is the spoken
+instruction, `selection` the selected text (empty: generate at the cursor), `beforeCursor` / `afterCursor` the text
+around it, `language` the language the instruction was spoken in. `output` is what would be pasted (empty when
+Command Mode gives up). Extra `expect` fields: `language` (the language the output must be in, for translations;
+defaults to the selection's language, else `language`) and `maxLength`. Rule checks: `empty_output`, `wrapped`
+(preamble, quotes, tags or a code fence were stripped), `language_changed`, `unchanged` (selection returned as is),
+`too_long` / `too_short` (over Command Mode's limit, under a tenth of the selection) and `expect_*`.
+`eval/command-corpus.jsonl` holds 35 cases (FR/EN: tone, translate, summarize, grammar, generate with no
+selection, reply using the surrounding text); baselines are `eval/baselines/command-<engine>.*`.
 
 ## How it maps to Wispr Flow
 | Stage | Wispr Flow | FlowClone |
