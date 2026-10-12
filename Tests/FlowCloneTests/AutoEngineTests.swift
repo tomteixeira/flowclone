@@ -50,6 +50,44 @@ final class DownloadRetryTests: XCTestCase {
     }
 }
 
+final class DownloadQueueTests: XCTestCase {
+    private let t0 = Date(timeIntervalSinceReferenceDate: 0)
+
+    func testDownloadsInOrder() {
+        var queue = DownloadQueue(["1.7b", "4b"])
+        XCTAssertEqual(queue.next(at: t0)?.id, "1.7b")
+        queue.succeeded("1.7b")
+        XCTAssertEqual(queue.next(at: t0)?.id, "4b")
+        queue.succeeded("4b")
+        XCTAssertNil(queue.next(at: t0))
+    }
+
+    func testAFailingModelDoesNotStarveTheNext() {
+        var queue = DownloadQueue(["1.7b", "4b"])
+        queue.failed("1.7b", at: t0)
+        let next = queue.next(at: t0)
+        XCTAssertEqual(next?.id, "4b")
+        XCTAssertEqual(next?.wait, 0)
+    }
+
+    func testAFailedModelIsRetriedAfterItsBackoff() {
+        var queue = DownloadQueue(["1.7b", "4b"])
+        queue.failed("1.7b", at: t0)
+        queue.succeeded("4b")
+        let retry = queue.next(at: t0.addingTimeInterval(10))
+        XCTAssertEqual(retry?.id, "1.7b")
+        XCTAssertEqual(retry?.wait, 20)
+    }
+
+    func testWhenEveryModelFailedTheEarliestRetryGoesFirst() {
+        var queue = DownloadQueue(["1.7b", "4b"])
+        queue.failed("1.7b", at: t0)
+        queue.failed("1.7b", at: t0.addingTimeInterval(30)) // retry due at 30 + 60
+        queue.failed("4b", at: t0.addingTimeInterval(31))   // retry due at 31 + 30
+        XCTAssertEqual(queue.next(at: t0.addingTimeInterval(31))?.id, "4b")
+    }
+}
+
 final class LocalModelResidencyTests: XCTestCase {
     private let t0 = Date(timeIntervalSinceReferenceDate: 0)
     private let policy = ResidencyPolicy(idleTimeout: 900, waitBudget: 0.75, assumedLoadDuration: 4)
