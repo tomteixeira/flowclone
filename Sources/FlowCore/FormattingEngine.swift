@@ -21,12 +21,31 @@ public enum FormattingEngine: String, Sendable, CaseIterable {
     /// then flip this to `[.local, .apple]`.
     public static let autoOrder: [ModelSource] = [.apple, .local]
 
+    /// The saved setting, or, before one was saved, the migrated "AI cleanup"
+    /// toggle: `cleanup=false` becomes `.off`, anything else `.auto`.
+    public static func fromSettings(stored: String?, legacyCleanup: Bool?) -> FormattingEngine {
+        if let stored, let engine = FormattingEngine(rawValue: stored) { return engine }
+        return legacyCleanup == false ? .off : .auto
+    }
+
     public var order: [ModelSource] {
         switch self {
         case .auto: Self.autoOrder
         case .apple: [.apple]
         case .off: []
         }
+    }
+
+    /// Whether to start loading the local model at key-down: only when the
+    /// cascade would actually reach it, i.e. every model ahead of it is
+    /// unavailable. Keeps ~1 GB out of memory while Apple's model handles it.
+    public func preloadsLocal(appleAvailable: Bool) -> Bool {
+        Self.preloadsLocal(order: order, appleAvailable: appleAvailable)
+    }
+
+    public static func preloadsLocal(order: [ModelSource], appleAvailable: Bool) -> Bool {
+        guard let index = order.firstIndex(of: .local) else { return false }
+        return order[..<index].allSatisfy { $0 == .apple && !appleAvailable }
     }
 
     /// Candidates in cascade order. Pass nil for a model that isn't installed.
