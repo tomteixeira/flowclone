@@ -23,6 +23,14 @@ final class LocalModelTests: XCTestCase {
     }
 }
 
+final class LocalModelSpecTests: XCTestCase {
+    func testDefaultModelsHaveShortNamesOthersTheirRepoName() {
+        XCTAssertEqual(LocalModels.formatting.displayName, "Qwen3 1.7B")
+        XCTAssertEqual(LocalModels.commandMode.displayName, "Qwen3 4B")
+        XCTAssertEqual(LocalModelSpec(id: "org/Some-Model-4bit", revision: "main").displayName, "Some-Model-4bit")
+    }
+}
+
 final class LanguageModelOverrideTests: XCTestCase {
     func testUnsetOrBlankMeansNoOverride() throws {
         XCTAssertNil(try LanguageModelOverride.parse(nil))

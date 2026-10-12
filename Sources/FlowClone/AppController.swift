@@ -665,13 +665,10 @@ extension AppController {
     }
 
     private func textModelChanged() {
-        let name = formattingSpec == LocalModels.formatting ? "Qwen3 1.7B"
-            : String(formattingSpec.id.split(separator: "/").last ?? "")
-        let text = localModels.statusText(for: formattingSpec, name: name)
+        let text = localModels.statusText(for: formattingSpec, name: formattingSpec.displayName)
         textModelLine.title = text
         if let command = localPlan.command, command != formattingSpec {
-            let name = command == LocalModels.commandMode ? "Qwen3 4B" : String(command.id.split(separator: "/").last ?? "")
-            commandModelLine.title = localModels.statusText(for: command, name: "Command Mode \(name)",
+            commandModelLine.title = localModels.statusText(for: command, name: "Command Mode \(command.displayName)",
                                                             loadsWhen: "you hold Shift")
         }
         setup.textModelStatus = text
