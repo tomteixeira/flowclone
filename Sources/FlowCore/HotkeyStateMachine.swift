@@ -38,8 +38,9 @@ public enum SessionMode: Equatable, Sendable {
 
 /// What the state machine tells its owner.
 public enum HotkeyOutput: Equatable, Sendable {
-    case press
-    /// The session switched mode while the key is held (the HUD changes look).
+    /// The key went down; `.command` when Shift was already held.
+    case press(mode: SessionMode)
+    /// Shift joined a hold that started as dictation (the HUD changes look).
     case modeChanged(SessionMode)
     case release(mode: SessionMode)
     /// Another key was used while holding the push-to-talk key: a shortcut, not dictation.
@@ -47,7 +48,7 @@ public enum HotkeyOutput: Equatable, Sendable {
 }
 
 /// Pure interpretation of key events for push-to-talk. Each event yields zero or
-/// more outputs, so later rules can emit several at once.
+/// more outputs, to be handled in order.
 public struct HotkeyStateMachine: Sendable {
     public let key: PushToTalkKey
     private var isDown = false
@@ -74,12 +75,8 @@ public struct HotkeyStateMachine: Sendable {
             if down {
                 interrupted = false
                 // Shift already held when the key goes down also means Command Mode.
-                guard flags & Self.shiftFlag != 0 else {
-                    mode = .dictation
-                    return [.press]
-                }
-                mode = .command
-                return [.press, .modeChanged(.command)]
+                mode = flags & Self.shiftFlag != 0 ? .command : .dictation
+                return [.press(mode: mode)]
             }
             return interrupted ? [] : [.release(mode: mode)]
         }

@@ -39,6 +39,36 @@ public enum DownloadRetry {
     }
 }
 
+/// The order local models download in. Models go in their given order; a
+/// failed download waits out its backoff while the others go ahead, so one
+/// model that keeps failing never holds up the next.
+public struct DownloadQueue<ID: Hashable & Sendable>: Sendable {
+    private var pending: [ID]
+    private var failures: [ID: Int] = [:]
+    private var retryAt: [ID: Date] = [:]
+
+    public init(_ ids: [ID]) { pending = ids }
+
+    /// The download to start next and how long to wait before starting it;
+    /// nil once every model is downloaded. Ties go to the earlier model.
+    public func next(at now: Date) -> (id: ID, wait: TimeInterval)? {
+        let due = pending.enumerated().min { a, b in
+            let (ta, tb) = (retryAt[a.element] ?? .distantPast, retryAt[b.element] ?? .distantPast)
+            return ta != tb ? ta < tb : a.offset < b.offset
+        }
+        return due.map { ($0.element, max(0, (retryAt[$0.element] ?? now).timeIntervalSince(now))) }
+    }
+
+    public mutating func succeeded(_ id: ID) {
+        pending.removeAll { $0 == id }
+    }
+
+    public mutating func failed(_ id: ID, at now: Date) {
+        failures[id, default: 0] += 1
+        retryAt[id] = now.addingTimeInterval(DownloadRetry.delay(afterFailures: failures[id]!))
+    }
+}
+
 /// Where a local model is in its download → load → unload lifecycle.
 public enum LocalModelPhase: Sendable, Equatable {
     case notDownloaded
@@ -54,7 +84,7 @@ public enum LocalModelPhase: Sendable, Equatable {
 public enum LocalModelReadiness: Sendable, Equatable {
     case ready
     /// A load is in progress and should finish within the budget: wait for it,
-    /// but no longer than this many seconds.
+    /// but no longer than this many seconds (`.infinity`: until it ends).
     case wait(upTo: TimeInterval)
     /// Fall through to the next model in the cascade.
     case unavailable
@@ -122,10 +152,15 @@ public struct LocalModelResidency: Sendable, Equatable {
     /// True when the model is on disk and neither loading nor loaded.
     public var canLoad: Bool { phase == .downloaded }
 
-    public func readiness(at now: Date) -> LocalModelReadiness {
+    /// `lastResort`: no other model could take over, so a load in progress is
+    /// waited out however long it takes rather than giving up after the budget.
+    /// A model that isn't on disk is unavailable either way.
+    public func readiness(at now: Date, lastResort: Bool = false) -> LocalModelReadiness {
         switch phase {
         case .loaded:
             return .ready
+        case .loading where lastResort:
+            return .wait(upTo: .infinity)
         case .loading(let since):
             let expected = lastLoadDuration ?? policy.assumedLoadDuration
             let remaining = since.addingTimeInterval(expected).timeIntervalSince(now)

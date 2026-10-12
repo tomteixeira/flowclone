@@ -1,8 +1,6 @@
 import Foundation
 import NaturalLanguage
 
-extension AppCategory: Codable {}
-
 /// Which language task a corpus case exercises; journal records (ticket 10)
 /// convert into these cases.
 public enum EvalTask: String, Codable, Sendable {
@@ -126,10 +124,19 @@ public struct EvalCase: Codable, Sendable, Equatable {
 
     /// One case per non-empty line.
     public static func decodeJSONL(_ text: String) throws -> [EvalCase] {
-        let decoder = JSONDecoder()
-        return try text.split(whereSeparator: \.isNewline)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { try decoder.decode(EvalCase.self, from: Data($0.utf8)) }
+        try JSONL.lines(text).map(decode)
+    }
+
+    static func decode(_ line: Substring) throws -> EvalCase {
+        try JSONDecoder().decode(EvalCase.self, from: Data(line.utf8))
+    }
+}
+
+/// JSON Lines, as corpora and the journal are written: one value per line.
+enum JSONL {
+    /// The non-blank lines.
+    static func lines(_ text: String) -> [Substring] {
+        text.split(whereSeparator: \.isNewline).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 }
 
@@ -248,52 +255,57 @@ public enum Evaluation {
     /// Command Mode: the output is what would be pasted, empty when Command Mode
     /// gives up (it never pastes the instruction).
     static func runCommand(_ evalCase: EvalCase, model: any TextModel) async -> EvalRecord {
-        let recorder = RecordingTextModel(model)
-        let clock = ContinuousClock()
-        let start = clock.now
-        let result = await LanguageTasks.command(evalCase.commandRequest, models: [recorder])
-        let elapsed = clock.now - start
-
-        let call = recorder.call
-        let outcome: EvalOutcome
-        switch (result, call) {
-        case (.success, _): outcome = .accepted
-        case (.failure(.emptyInstruction), _): outcome = .skipped
-        case (.failure(.noModelAvailable), _): outcome = .unavailable
-        case (.failure(.outputRejected), .success?): outcome = .rejected
-        case (.failure(.outputRejected), _): outcome = .error
+        await measure(evalCase, model: model, task: { await LanguageTasks.command(evalCase.commandRequest, models: $0) },
+                      output: { (try? $0.get())?.text ?? "" }) { result, call in
+            switch (result, call) {
+            case (.success, _): .accepted
+            case (.failure(.emptyInstruction), _): .skipped
+            case (.failure(.noModelAvailable), _): .unavailable
+            case (.failure(.outputRejected), .success?): .rejected
+            case (.failure(.outputRejected), _): .error
+            }
         }
-        let modelOutput: String? = if case .success(let text)? = call { text } else { nil }
-        let output = (try? result.get())?.text ?? ""
-        let latency: Double? = call == nil ? nil
-            : Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
-        var record = EvalRecord(id: evalCase.id, input: evalCase, model: model.id, output: output,
-                                modelOutput: modelOutput, outcome: outcome, latencyMs: latency, failures: [])
-        record.failures = EvalRules.failures(for: record)
-        return record
     }
 
     static func runFormatting(_ evalCase: EvalCase, model: any TextModel) async -> EvalRecord {
+        await measure(evalCase, model: model, task: { await LanguageTasks.format(evalCase.formattingRequest, models: $0) },
+                      output: \.text) { result, call in
+            switch call {
+            case nil: model.isAvailable ? .skipped : .unavailable
+            case .failure?: .error
+            case .success?: result.modelID == nil ? .rejected : .accepted
+            }
+        }
+    }
+
+    /// Runs `task` with only `model` (recording what it returned), timed, and
+    /// builds the record: `output` is what would be pasted, `outcome` how it went.
+    private static func measure<Result>(
+        _ evalCase: EvalCase, model: any TextModel,
+        task: ([any TextModel]) async -> Result,
+        output: (Result) -> String,
+        outcome: (Result, RecordingTextModel.Call?) -> EvalOutcome
+    ) async -> EvalRecord {
         let recorder = RecordingTextModel(model)
         let clock = ContinuousClock()
         let start = clock.now
-        let result = await LanguageTasks.format(evalCase.formattingRequest, models: [recorder])
+        let result = await task([recorder])
         let elapsed = clock.now - start
 
         let call = recorder.call
-        let outcome: EvalOutcome
-        switch call {
-        case nil: outcome = model.isAvailable ? .skipped : .unavailable
-        case .failure?: outcome = .error
-        case .success?: outcome = result.modelID == nil ? .rejected : .accepted
-        }
         let modelOutput: String? = if case .success(let text)? = call { text } else { nil }
-        let latency: Double? = call == nil ? nil
-            : Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
-        var record = EvalRecord(id: evalCase.id, input: evalCase, model: model.id, output: result.text,
-                                modelOutput: modelOutput, outcome: outcome, latencyMs: latency, failures: [])
+        var record = EvalRecord(id: evalCase.id, input: evalCase, model: model.id, output: output(result),
+                                modelOutput: modelOutput, outcome: outcome(result, call),
+                                latencyMs: call == nil ? nil : elapsed.milliseconds, failures: [])
         record.failures = EvalRules.failures(for: record)
         return record
+    }
+}
+
+extension Duration {
+    /// The duration in milliseconds, fractional.
+    public var milliseconds: Double {
+        Double(components.seconds) * 1000 + Double(components.attoseconds) / 1e15
     }
 }
 
@@ -346,7 +358,7 @@ public enum EvalRules {
         if record.modelOutput != nil, TextHeuristics.looksLikeQuestion(raw), !text.contains("?") {
             failures.append("answered_question")
         }
-        if let expected = record.input.language, let detected = dominantLanguage(text), detected != expected {
+        if let expected = record.input.language, let detected = frenchOrEnglish(text), detected != expected {
             failures.append("language_changed")
         }
         return failures + expectationFailures(record.input.expect, text: text)
@@ -390,8 +402,8 @@ public enum EvalRules {
 
         let selection = input.selection.trimmingCharacters(in: .whitespacesAndNewlines)
         let expectedLanguage = input.expect?.language
-            ?? (selection.isEmpty ? input.language : dominantLanguage(selection))
-        if let expectedLanguage, let detected = dominantLanguage(text), detected != expectedLanguage {
+            ?? (selection.isEmpty ? input.language : frenchOrEnglish(selection))
+        if let expectedLanguage, let detected = frenchOrEnglish(text), detected != expectedLanguage {
             failures.append("language_changed")
         }
         if !selection.isEmpty, text == selection { failures.append("unchanged") }
@@ -409,8 +421,9 @@ public enum EvalRules {
         return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    /// French or English, for texts long enough to tell (4+ words); nil otherwise.
-    static func dominantLanguage(_ text: String) -> String? {
+    /// "fr" or "en", whichever `text` is closer to (the corpus languages), for
+    /// texts long enough to tell (4+ words); nil otherwise.
+    static func frenchOrEnglish(_ text: String) -> String? {
         guard TextHeuristics.words(text).count >= 4 else { return nil }
         let recognizer = NLLanguageRecognizer()
         recognizer.languageConstraints = [.french, .english]

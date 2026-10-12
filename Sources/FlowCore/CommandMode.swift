@@ -61,6 +61,22 @@ public enum CommandFailure: Error, Sendable, Equatable {
     case outputRejected
 }
 
+extension CommandFailure {
+    /// What the HUD says. `localModel`: where the Command Mode local model is,
+    /// nil when none is used. With no model to run, a model still on its way
+    /// explains why nothing happened.
+    public func message(localModel: LocalModelPhase?) -> String {
+        switch (self, localModel) {
+        case (.emptyInstruction, _): "Didn't catch that"
+        case (.outputRejected, _): "Command Mode couldn't produce usable text"
+        case (.noModelAvailable, .notDownloaded?), (.noModelAvailable, .downloading?),
+             (.noModelAvailable, .downloadFailed?): "Model downloading…"
+        case (.noModelAvailable, .loading?): "Model loading…"
+        case (.noModelAvailable, _): "No model available for Command Mode"
+        }
+    }
+}
+
 extension LanguageTasks {
     /// Characters of context sent on each side of the selection.
     static let commandContextLength = 300
@@ -83,7 +99,9 @@ extension LanguageTasks {
             models,
             instructions: commandInstructions(request, hasSelection: hasSelection),
             prompt: commandPrompt(request, hasSelection: hasSelection),
-            options: TextGenerationOptions(maxTokens: maxLength / 2, sampling: .greedy)
+            // A token decodes to at least one character, so an output cut off at the
+            // token limit is longer than `maxLength` and rejected, never pasted half-done.
+            options: TextGenerationOptions(maxTokens: maxLength + 1, sampling: .greedy)
         ) { response -> String? in
             let cleaned = TextHeuristics.stripCommandWrapping(response)
             return !cleaned.isEmpty && cleaned.count <= maxLength ? cleaned : nil
@@ -121,12 +139,11 @@ extension LanguageTasks {
             ? "Apply the instruction to the text inside <selection> and output the rewritten text that replaces it."
             : "Write the text the instruction asks for; it is inserted at <cursor/>, between <before> and <after>."
         let languageRule: String
-        if hasSelection, let code = TextHeuristics.dominantLanguage(request.selection),
-           let name = Locale(identifier: "en").localizedString(forLanguageCode: code) {
+        if hasSelection, let name = TextHeuristics.detectedLanguage(request.selection).flatMap(TextHeuristics.languageName) {
             languageRule = "Write in \(name), the language of the selection, unless the instruction asks for a translation."
         } else if hasSelection {
             languageRule = "Write in the language of the selection unless the instruction asks for a translation."
-        } else if let name = request.language.flatMap({ Locale(identifier: "en").localizedString(forLanguageCode: $0) }) {
+        } else if let name = request.language.flatMap(TextHeuristics.languageName) {
             languageRule = "Write in \(name), the language of the instruction, unless it asks for another language."
         } else {
             languageRule = "Write in the language of the instruction unless it asks for another language."
@@ -163,17 +180,42 @@ extension TextHeuristics {
                 t = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        if let colon = t.firstIndex(of: ":"), t[..<colon].count <= 60 {
-            let lead = t[..<colon].lowercased()
-            if !lead.contains("\n"), ["here is", "here's", "voici", "voilà"].contains(where: lead.hasPrefix) {
-                t = String(t[t.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-        }
-        return stripModelWrapping(t)
+        return stripModelWrapping(strippingPreamble(t))
     }
 
-    /// ISO code of the dominant language of `text`, nil when unsure.
-    public static func dominantLanguage(_ text: String) -> String? {
+    private static let preambleOpeners = ["here is", "here's", "here’s", "voici", "voilà", "voila"]
+    private static let preambleInterjections = ["sure", "certainly", "of course", "absolutely", "okay", "ok",
+                                                "bien sûr", "d'accord", "d’accord", "très bien", "avec plaisir"]
+
+    /// Drops a lead-in up to its colon: "Here is the rewritten text:", "Sure!
+    /// Here's…:", "Bien sûr, voici le texte :", or an interjection followed by a
+    /// line of its own ending with a colon ("Certainly, I made it formal:⏎").
+    static func strippingPreamble(_ text: String) -> String {
+        guard let colon = text.firstIndex(of: ":"), text[..<colon].count <= 80 else { return text }
+        let lead = text[..<colon].lowercased()
+        guard !lead.contains("\n") else { return text }
+        var rest = Substring(lead)
+        var interjected = false
+        for word in preambleInterjections where rest.hasPrefix(word) {
+            let after = rest.dropFirst(word.count)
+            guard let mark = after.first, "!,.".contains(mark) else { continue }
+            rest = after.dropFirst().drop(while: \.isWhitespace)
+            interjected = true
+            break
+        }
+        let after = text[text.index(after: colon)...]
+        let endsLine = after.first(where: { !$0.isWhitespace || $0.isNewline })?.isNewline ?? true
+        guard preambleOpeners.contains(where: rest.hasPrefix) || (interjected && endsLine) else { return text }
+        return after.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// English name of an ISO language code ("fr" → "French"), for prompts.
+    public static func languageName(_ code: String) -> String? {
+        Locale(identifier: "en").localizedString(forLanguageCode: code)
+    }
+
+    /// ISO code of the dominant language of `text`, any language; nil when unsure.
+    public static func detectedLanguage(_ text: String) -> String? {
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(text)
         guard let language = recognizer.dominantLanguage, language != .undetermined else { return nil }

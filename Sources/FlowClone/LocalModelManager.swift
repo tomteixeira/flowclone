@@ -36,25 +36,24 @@ final class LocalModelManager {
         models.first { $0.spec == spec }
     }
 
-    /// Downloads every model in order; a failed download retries with backoff
-    /// before moving on, so the first model is never blocked by a later one.
+    /// Downloads every model in order, one at a time. A failed download retries
+    /// with backoff while the next model goes ahead (`DownloadQueue`).
     func start() {
         guard !started else { return }
         started = true
+        let models = models
         Task {
-            for model in models {
-                var failures = 0
-                while true {
-                    do {
-                        try await model.download()
-                        log.info("text model downloaded: \(model.id, privacy: .public)")
-                        break
-                    } catch {
-                        failures += 1
-                        let delay = DownloadRetry.delay(afterFailures: failures)
-                        log.error("text model \(model.id, privacy: .public) download failed (\(failures)): \(error.localizedDescription, privacy: .public); retrying in \(Int(delay))s")
-                        try? await Task.sleep(for: .seconds(delay))
-                    }
+            var queue = DownloadQueue(models.indices.map { $0 })
+            while let (index, wait) = queue.next(at: Date()) {
+                let model = models[index]
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                do {
+                    try await model.download()
+                    queue.succeeded(index)
+                    log.info("text model downloaded: \(model.id, privacy: .public)")
+                } catch {
+                    queue.failed(index, at: Date())
+                    log.error("text model \(model.id, privacy: .public) download failed: \(error.localizedDescription, privacy: .public); retrying later")
                 }
             }
         }

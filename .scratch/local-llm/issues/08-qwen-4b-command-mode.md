@@ -22,4 +22,4 @@
 
 ## Comments
 
-- Merged into `local-llm` (`swift build`, `swift test` with 135 tests, and `scripts/build-app.sh` pass). The unticked items need a manual check in the running app. Known gap: with Apple Intelligence off and the 4B still loading beyond the 4 s budget, Command Mode shows 'No model available' instead of waiting.
+- Merged into `local-llm` (`swift build`, `swift test` with 135 tests, and `scripts/build-app.sh` pass). The unticked items need a manual check in the running app.

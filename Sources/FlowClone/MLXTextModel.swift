@@ -30,9 +30,24 @@ final class MLXTextModel: TextModel {
     /// Unmanaged (CLI, eval harness): always offered, downloads and loads on
     /// first use. Managed (the app's `LocalModelManager`): offered only when
     /// loaded, or when a load in progress should finish within the wait budget.
-    var isAvailable: Bool {
+    var isAvailable: Bool { isAvailable(lastResort: false) }
+
+    private func isAvailable(lastResort: Bool) -> Bool {
         guard managed else { return true }
-        return residency.withLock { $0.readiness(at: Date()) } != .unavailable
+        return residency.withLock { $0.readiness(at: Date(), lastResort: lastResort) } != .unavailable
+    }
+
+    /// The same model as the last one a cascade can try: a load in progress is
+    /// waited out instead of giving up after the policy's wait budget.
+    var asLastResort: any TextModel { LastResort(base: self) }
+
+    private struct LastResort: TextModel {
+        let base: MLXTextModel
+        var id: String { base.id }
+        var isAvailable: Bool { base.isAvailable(lastResort: true) }
+        func generate(instructions: String, prompt: String, options: TextGenerationOptions) async throws -> String {
+            try await base.generate(instructions: instructions, prompt: prompt, options: options, lastResort: true)
+        }
     }
 
     /// The managed lifecycle state; nil when unmanaged.
@@ -109,18 +124,28 @@ final class MLXTextModel: TextModel {
     }
 
     func generate(instructions: String, prompt: String, options: TextGenerationOptions) async throws -> String {
+        try await generate(instructions: instructions, prompt: prompt, options: options, lastResort: false)
+    }
+
+    private func generate(instructions: String, prompt: String, options: TextGenerationOptions,
+                          lastResort: Bool) async throws -> String {
         if managed {
             // Decide and mark the use atomically so an idle unload can't slip in between.
             let readiness = residency.withLock { state -> LocalModelReadiness in
-                let readiness = state.readiness(at: Date())
+                let readiness = state.readiness(at: Date(), lastResort: lastResort)
                 if readiness != .unavailable { state.useBegan() }
                 return readiness
             }
             if case .wait(let budget) = readiness {
-                // The load runs in its own task; poll rather than await it so the
-                // cascade gives up on time.
-                let deadline = Date().addingTimeInterval(budget)
-                while residency.withLock({ $0.phase }) != .loaded, Date() < deadline, !Task.isCancelled {
+                // The load runs in its own task; poll rather than await it so
+                // the cascade gives up on time. An infinite budget waits until the load ends.
+                let clock = ContinuousClock()
+                let deadline = budget.isFinite ? clock.now.advanced(by: .seconds(budget)) : nil
+                func stillLoading() -> Bool {
+                    if case .loading = residency.withLock({ $0.phase }) { return true }
+                    return false
+                }
+                while stillLoading(), deadline.map({ clock.now < $0 }) ?? true, !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(20))
                 }
                 if residency.withLock({ $0.phase }) != .loaded {
@@ -269,10 +294,5 @@ enum TextModels {
     static func make(id: String) throws -> (any TextModel)? {
         guard let choice = try LanguageModelOverride.parse(id) else { throw LanguageModelOverride.InvalidValue(value: id) }
         return make(choice)
-    }
-
-    /// The `FLOWCLONE_LLM` override, nil when unset.
-    static func override() throws -> LanguageModelOverride? {
-        try LanguageModelOverride.fromEnvironment()
     }
 }

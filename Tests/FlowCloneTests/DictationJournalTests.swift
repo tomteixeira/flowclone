@@ -27,6 +27,18 @@ final class DictationJournalTests: XCTestCase {
         XCTAssertTrue(entry.beforeCursor.hasSuffix("aend"))
     }
 
+    func testKeepsOnlyThe300CharactersOnEachSideOfTheSelection() {
+        let before = String(repeating: "a", count: 500) + "end"
+        let after = "start" + String(repeating: "z", count: 500)
+        let entry = CommandJournalEntry(date: date, instruction: "x", selection: "y", beforeSelection: before,
+                                        afterSelection: after, category: .other, language: nil, result: nil,
+                                        model: nil, latencyMs: 0)
+        XCTAssertEqual(entry.beforeSelection.count, 300)
+        XCTAssertTrue(entry.beforeSelection.hasSuffix("aend"))
+        XCTAssertEqual(entry.afterSelection.count, 300)
+        XCTAssertTrue(entry.afterSelection.hasPrefix("startz"))
+    }
+
     func testFormattingRecordBecomesAFormattingEvalCase() throws {
         let evalCase = try XCTUnwrap(formatting.evalCase)
         XCTAssertEqual(evalCase.id, "journal-1760000000250")
@@ -51,6 +63,14 @@ final class DictationJournalTests: XCTestCase {
             instruction: "make this more formal", selection: "hey can u send it", beforeSelection: "Hi Tom,\n",
             afterSelection: "\nThanks", category: .email, language: "en"))
         XCTAssertEqual(evalCase.tags, ["journal"])
+    }
+
+    func testMalformedJournalLineInACorpusReportsWhatIsWrongWithIt() {
+        let line = #"{"kind":"formatting","date":1760000000250,"formatted":"Hi.","category":"chat","latencyMs":10,"beforeCursor":""}"#
+        XCTAssertThrowsError(try EvalCase.decodeCorpus(line)) { error in
+            guard case DecodingError.keyNotFound(let key, _) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(key.stringValue, "raw")
+        }
     }
 
     func testCorpusMixesJournalLinesAndHandWrittenCases() throws {

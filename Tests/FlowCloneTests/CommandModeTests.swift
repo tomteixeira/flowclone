@@ -59,6 +59,22 @@ final class CommandModeTests: XCTestCase {
         XCTAssertEqual(qwen.calls, 0)
     }
 
+    // MARK: HUD message on failure
+
+    func testNoModelWhileTheLocalModelDownloadsSaysSo() {
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .downloading(0.3)), "Model downloading…")
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .notDownloaded), "Model downloading…")
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .downloadFailed("offline")), "Model downloading…")
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .loading(since: Date())), "Model loading…")
+    }
+
+    func testNoModelWithNothingInProgressKeepsTheGenericMessage() {
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: nil), "No model available for Command Mode")
+        XCTAssertEqual(CommandFailure.noModelAvailable.message(localModel: .downloaded), "No model available for Command Mode")
+        XCTAssertEqual(CommandFailure.outputRejected.message(localModel: .downloading(0.3)),
+                       "Command Mode couldn't produce usable text")
+    }
+
     func testEmptyInstructionFailsWithoutCallingModel() async {
         let model = FakeTextModel("apple", reply: .text("Anything."))
         let r3 = await LanguageTasks.command(request("  "), models: [model])
@@ -88,6 +104,23 @@ final class CommandModeTests: XCTestCase {
         XCTAssertEqual(result, .failure(.outputRejected))
     }
 
+    /// Stops at the token limit, each token one character: the shortest output
+    /// a model can give when it hits `maxTokens`.
+    private final class TokenLimitedModel: TextModel, @unchecked Sendable {
+        let id = "qwen"
+        let isAvailable = true
+        func generate(instructions: String, prompt: String, options: TextGenerationOptions) async throws -> String {
+            String(repeating: "a", count: options.maxTokens)
+        }
+    }
+
+    func testOutputCutOffAtTheTokenLimitIsRejected() async {
+        let withSelection = await LanguageTasks.command(request(), models: [TokenLimitedModel()])
+        XCTAssertEqual(withSelection, .failure(.outputRejected))
+        let atCursor = await LanguageTasks.command(request("write a reply", selection: ""), models: [TokenLimitedModel()])
+        XCTAssertEqual(atCursor, .failure(.outputRejected))
+    }
+
     func testEveryModelRejectedGivesTypedFailure() async {
         let qwen = FakeTextModel("qwen", reply: .error)
         let apple = FakeTextModel("apple", reply: .text(""))
@@ -101,11 +134,23 @@ final class CommandModeTests: XCTestCase {
             "\"Could you send the deck before Friday?\"",
             "```\nCould you send the deck before Friday?\n```",
             "Voici le texte : Could you send the deck before Friday?",
+            "Sure! Here's the rewritten text: Could you send the deck before Friday?",
+            "Sure! Here’s a more formal version:\n\nCould you send the deck before Friday?",
+            "Bien sûr, voici le texte : Could you send the deck before Friday?",
+            "Certainly, I made it more formal:\nCould you send the deck before Friday?",
         ]
         for reply in cases {
             let model = FakeTextModel("apple", reply: .text(reply))
             let result = await LanguageTasks.command(request(), models: [model])
             XCTAssertEqual(try? result.get().text, "Could you send the deck before Friday?", reply)
+        }
+    }
+
+    func testAnOutputThatOnlyStartsLikeAPreambleIsKept() async {
+        for reply in ["Of course we can meet: Friday works.", "Sure, Friday works: see you then."] {
+            let model = FakeTextModel("apple", reply: .text(reply))
+            let result = await LanguageTasks.command(request("reply yes", selection: ""), models: [model])
+            XCTAssertEqual(try? result.get().text, reply, reply)
         }
     }
 
@@ -120,15 +165,16 @@ final class CommandModeTests: XCTestCase {
 
     func testPromptCarriesInstructionSelectionAndBoundedContext() async {
         let model = FakeTextModel("apple", reply: .text("Could you send the deck?"))
-        let before = String(repeating: "a", count: 1000) + "BEFORE-TAIL"
-        let after = "AFTER-HEAD" + String(repeating: "z", count: 1000)
+        let before = "FAR-BEFORE" + String(repeating: "a", count: 1000) + "BEFORE-TAIL"
+        let after = "AFTER-HEAD" + String(repeating: "z", count: 1000) + "FAR-AFTER"
         _ = await LanguageTasks.command(request(before: before, after: after), models: [model])
         let prompt = model.lastPrompt
         XCTAssertTrue(prompt.contains("make this more formal"))
         XCTAssertTrue(prompt.contains(selection))
         XCTAssertTrue(prompt.contains("BEFORE-TAIL"))
         XCTAssertTrue(prompt.contains("AFTER-HEAD"))
-        XCTAssertLessThan(prompt.count, 800, "about 300 characters of context on each side")
+        XCTAssertFalse(prompt.contains("FAR-BEFORE"), "context far before the selection isn't sent")
+        XCTAssertFalse(prompt.contains("FAR-AFTER"), "context far after the selection isn't sent")
     }
 
     func testOutputLanguageFollowsTheSelection() async {

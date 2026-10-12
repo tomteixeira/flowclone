@@ -9,13 +9,6 @@ import Foundation
 /// Runs every case through `Evaluation` with one model, writes one JSON record
 /// per case and prints a summary. See the README, "Evaluating the formatting step".
 enum EvalCommand {
-    /// The language model the harness runs, by command-line name: "apple", an
-    /// alias ("qwen3-1.7b", "qwen3-4b") or a Hugging Face repo id (MLX).
-    /// Nil for "off" or a name the factory doesn't know.
-    static func textModel(named name: String) -> (any TextModel)? {
-        try? TextModels.make(id: name)
-    }
-
     /// `--engine`, else `FLOWCLONE_LLM`, else Apple's model.
     static func engineName(arguments: [String], environment: [String: String]) -> String {
         if let i = arguments.firstIndex(of: "--engine"), i + 1 < arguments.count { return arguments[i + 1] }
@@ -35,7 +28,13 @@ enum EvalCommand {
         let engine = engineName(arguments: arguments, environment: ProcessInfo.processInfo.environment)
         let outPath = option("--out") ?? "eval-\(engine.replacingOccurrences(of: "/", with: "_")).jsonl"
 
-        guard let model = textModel(named: engine) else { return fail("unknown engine: \(engine)") }
+        let model: any TextModel
+        do {
+            guard let made = try TextModels.make(id: engine) else { return fail("engine \(engine) runs no model") }
+            model = made
+        } catch {
+            return fail("unknown engine: \(error)")
+        }
         let cases: [EvalCase]
         do {
             cases = try EvalCase.decodeCorpus(String(contentsOfFile: corpusPath, encoding: .utf8))
@@ -52,7 +51,7 @@ enum EvalCommand {
         if let mlx = model as? MLXTextModel {
             // Download (first run only), load and kernel warm-up.
             do {
-                try await mlx.load { stderr("llm: downloading \(Int($0 * 100))%") }
+                try await mlx.load { printToStandardError("llm: downloading \(Int($0 * 100))%") }
             } catch {
                 return fail("can't load \(mlx.id): \(error)")
             }
@@ -61,7 +60,7 @@ enum EvalCommand {
             _ = try? await model.generate(instructions: "Reply with OK.", prompt: "OK",
                                           options: TextGenerationOptions(maxTokens: 4))
         }
-        let loadTime = milliseconds(clock.now - warmStart)
+        let loadTime = (clock.now - warmStart).milliseconds
 
         var records: [EvalRecord] = []
         let encoder = JSONEncoder()
@@ -72,7 +71,7 @@ enum EvalCommand {
             records.append(record)
             if let data = try? encoder.encode(record) { lines += String(decoding: data, as: UTF8.self) + "\n" }
             let mark = record.failures.isEmpty ? "ok" : record.failures.joined(separator: " ")
-            stderr("[\(n + 1)/\(cases.count)] \(record.id) \(record.outcome.rawValue) "
+            printToStandardError("[\(n + 1)/\(cases.count)] \(record.id) \(record.outcome.rawValue) "
                    + "\(record.latencyMs.map { String(format: "%.0fms", $0) } ?? "-") \(mark)")
         }
         do {
@@ -94,16 +93,12 @@ enum EvalCommand {
         return UInt64(usage.ru_maxrss) // bytes on macOS
     }
 
-    static func milliseconds(_ d: Duration) -> Double {
-        Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15
-    }
-
-    static func stderr(_ line: String) {
+    static func printToStandardError(_ line: String) {
         FileHandle.standardError.write(Data((line + "\n").utf8))
     }
 
     static func fail(_ message: String) -> Int32 {
-        stderr(message)
+        printToStandardError(message)
         return 1
     }
 }

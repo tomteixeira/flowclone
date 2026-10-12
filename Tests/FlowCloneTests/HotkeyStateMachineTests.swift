@@ -18,7 +18,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 54, flags: rightCmd),
             .flagsChanged(keycode: 54, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .release(mode: .dictation)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .release(mode: .dictation)])
     }
 
     func testKeyDownWhileHeldInterruptsAndSuppressesRelease() {
@@ -28,7 +28,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .keyDown,
             .flagsChanged(keycode: 54, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .interrupt])
+        XCTAssertEqual(out, [.press(mode: .dictation), .interrupt])
     }
 
     func testOtherModifierWhileHeldInterrupts() {
@@ -39,7 +39,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 61, flags: rightCmd),
             .flagsChanged(keycode: 54, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .interrupt])
+        XCTAssertEqual(out, [.press(mode: .dictation), .interrupt])
     }
 
     func testRepeatedFlagsChangedWithoutStateChangeEmitsNothing() {
@@ -49,7 +49,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 54, flags: 0),
             .flagsChanged(keycode: 54, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .release(mode: .dictation)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .release(mode: .dictation)])
     }
 
     func testKeyDownWhileNotHeldEmitsNothing() {
@@ -70,7 +70,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 61, flags: 0x80000 | 0x40),
             .flagsChanged(keycode: 61, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .release(mode: .dictation)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .release(mode: .dictation)])
     }
 
     func testLeftOptionIsNotRightOption() {
@@ -83,7 +83,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 63, flags: 0x800000),
             .flagsChanged(keycode: 63, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .release(mode: .dictation)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .release(mode: .dictation)])
     }
 
     func testNewHoldAfterInterruptedOneReleasesNormally() {
@@ -94,7 +94,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 54, flags: rightCmd),
             .flagsChanged(keycode: 54, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .interrupt, .press, .release(mode: .dictation)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .interrupt, .press(mode: .dictation), .release(mode: .dictation)])
     }
 
     // MARK: Command Mode (Shift)
@@ -106,7 +106,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 54, flags: leftShift),
             .flagsChanged(keycode: 56, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .modeChanged(.command), .release(mode: .command)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .modeChanged(.command), .release(mode: .command)])
     }
 
     func testShiftAlreadyHeldAtPressGivesCommandMode() {
@@ -115,7 +115,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 54, flags: rightShift | rightCmd),
             .flagsChanged(keycode: 54, flags: rightShift),
         ])
-        XCTAssertEqual(out, [.press, .modeChanged(.command), .release(mode: .command)])
+        XCTAssertEqual(out, [.press(mode: .command), .release(mode: .command)])
     }
 
     func testReleasingShiftBeforeTheKeyKeepsCommandMode() {
@@ -125,7 +125,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 60, flags: 0x80000 | 0x40),
             .flagsChanged(keycode: 61, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .modeChanged(.command), .release(mode: .command)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .modeChanged(.command), .release(mode: .command)])
     }
 
     func testShiftPressedTwiceAnnouncesCommandModeOnce() {
@@ -136,7 +136,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 56, flags: rightCmd | leftShift),
             .flagsChanged(keycode: 54, flags: leftShift),
         ])
-        XCTAssertEqual(out, [.press, .modeChanged(.command), .release(mode: .command)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .modeChanged(.command), .release(mode: .command)])
     }
 
     func testKeyDownAfterShiftSwitchInterrupts() {
@@ -146,7 +146,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .keyDown, // ⌘⇧4
             .flagsChanged(keycode: 54, flags: leftShift),
         ])
-        XCTAssertEqual(out, [.press, .modeChanged(.command), .interrupt])
+        XCTAssertEqual(out, [.press(mode: .dictation), .modeChanged(.command), .interrupt])
     }
 
     func testOtherModifierAfterShiftSwitchInterrupts() {
@@ -156,7 +156,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 59, flags: rightCmd | leftShift | 0x40000 | 0x01), // ⌃
             .flagsChanged(keycode: 54, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .modeChanged(.command), .interrupt])
+        XCTAssertEqual(out, [.press(mode: .dictation), .modeChanged(.command), .interrupt])
     }
 
     func testShiftWhileNotHeldEmitsNothing() {
@@ -172,7 +172,7 @@ final class HotkeyStateMachineTests: XCTestCase {
             .flagsChanged(keycode: 54, flags: rightCmd),
             .flagsChanged(keycode: 54, flags: 0),
         ])
-        XCTAssertEqual(out, [.press, .modeChanged(.command), .release(mode: .command),
-                             .press, .release(mode: .dictation)])
+        XCTAssertEqual(out, [.press(mode: .dictation), .modeChanged(.command), .release(mode: .command),
+                             .press(mode: .dictation), .release(mode: .dictation)])
     }
 }

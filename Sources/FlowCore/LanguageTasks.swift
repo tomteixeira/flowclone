@@ -3,7 +3,7 @@ import Foundation
 /// Everything FlowClone asks of a language model, behind the `TextModel` seam.
 /// Each task (formatting today, Command Mode next) owns its prompt, its output
 /// guards and the fallback cascade over an ordered list of candidate models,
-/// usually resolved by `FormattingEngine.candidates(local:apple:)`.
+/// usually resolved by `LocalModelPlan`.
 public enum LanguageTasks {
     /// Try each available model in order; the first output `accept` maps to a
     /// non-nil value wins. Unavailable, throwing or rejected models fall through.
@@ -32,12 +32,17 @@ public struct FormattingRequest: Sendable, Equatable {
     public var category: AppCategory
     /// Text before the cursor; only its tail is sent to the model.
     public var beforeCursor: String
+    /// Terms to spell the user's way (personal dictionary, name, words on
+    /// screen); near misses in the text to paste are snapped to them.
+    public var vocabulary: [String]
 
-    public init(raw: String, language: String?, category: AppCategory, beforeCursor: String) {
+    public init(raw: String, language: String?, category: AppCategory, beforeCursor: String,
+                vocabulary: [String] = []) {
         self.raw = raw
         self.language = language
         self.category = category
         self.beforeCursor = beforeCursor
+        self.vocabulary = vocabulary
     }
 }
 
@@ -61,7 +66,15 @@ extension LanguageTasks {
     /// for this, so the dictation is fenced off as data, decoding is greedy, and
     /// every output is checked; a rejected output falls through to the next model,
     /// and with no model left the raw transcript is returned (never lose words).
+    /// Whatever is returned is then corrected against the request's vocabulary,
+    /// since a model may respell a name the speech engine got right.
     public static func format(_ request: FormattingRequest, models: [any TextModel]) async -> FormattingResult {
+        var result = await cleanUp(request, models: models)
+        result.text = VocabularyCorrection.apply(to: result.text, vocabulary: request.vocabulary)
+        return result
+    }
+
+    private static func cleanUp(_ request: FormattingRequest, models: [any TextModel]) async -> FormattingResult {
         let raw = request.raw
         let unchanged = FormattingResult(text: raw, modelID: nil)
         guard !TextHeuristics.shouldSkipFormatting(raw) else { return unchanged }
@@ -88,7 +101,7 @@ extension LanguageTasks {
     /// `language`: ISO code from the speech engine. Wispr sends non-English text to a
     /// separate endpoint (`/llm/format_non_english` with `detected_language`).
     static func formattingInstructions(category: AppCategory, language: String?) -> String {
-        let languageName = language.flatMap { Locale(identifier: "en").localizedString(forLanguageCode: $0) }
+        let languageName = language.flatMap(TextHeuristics.languageName)
         let languageRule = languageName.map {
             "The dictation is in \($0). Write the cleaned text in \($0); never translate it."
         } ?? "Keep the language the dictation is in; never translate it."

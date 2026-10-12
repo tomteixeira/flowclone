@@ -11,6 +11,15 @@ public struct LocalModelSpec: Sendable, Equatable, Hashable {
         self.id = id
         self.revision = revision
     }
+
+    /// For the menu: "Qwen3 1.7B" / "Qwen3 4B" for the default models, else the repo name.
+    public var displayName: String {
+        switch self {
+        case LocalModels.formatting: "Qwen3 1.7B"
+        case LocalModels.commandMode: "Qwen3 4B"
+        default: String(id.split(separator: "/").last ?? Substring(id))
+        }
+    }
 }
 
 /// The 4-bit MLX conversions FlowClone uses, pinned to the commits checked on

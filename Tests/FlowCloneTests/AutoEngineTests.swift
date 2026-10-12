@@ -50,6 +50,44 @@ final class DownloadRetryTests: XCTestCase {
     }
 }
 
+final class DownloadQueueTests: XCTestCase {
+    private let t0 = Date(timeIntervalSinceReferenceDate: 0)
+
+    func testDownloadsInOrder() {
+        var queue = DownloadQueue(["1.7b", "4b"])
+        XCTAssertEqual(queue.next(at: t0)?.id, "1.7b")
+        queue.succeeded("1.7b")
+        XCTAssertEqual(queue.next(at: t0)?.id, "4b")
+        queue.succeeded("4b")
+        XCTAssertNil(queue.next(at: t0))
+    }
+
+    func testAFailingModelDoesNotStarveTheNext() {
+        var queue = DownloadQueue(["1.7b", "4b"])
+        queue.failed("1.7b", at: t0)
+        let next = queue.next(at: t0)
+        XCTAssertEqual(next?.id, "4b")
+        XCTAssertEqual(next?.wait, 0)
+    }
+
+    func testAFailedModelIsRetriedAfterItsBackoff() {
+        var queue = DownloadQueue(["1.7b", "4b"])
+        queue.failed("1.7b", at: t0)
+        queue.succeeded("4b")
+        let retry = queue.next(at: t0.addingTimeInterval(10))
+        XCTAssertEqual(retry?.id, "1.7b")
+        XCTAssertEqual(retry?.wait, 20)
+    }
+
+    func testWhenEveryModelFailedTheEarliestRetryGoesFirst() {
+        var queue = DownloadQueue(["1.7b", "4b"])
+        queue.failed("1.7b", at: t0)
+        queue.failed("1.7b", at: t0.addingTimeInterval(30)) // retry due at 30 + 60
+        queue.failed("4b", at: t0.addingTimeInterval(31))   // retry due at 31 + 30
+        XCTAssertEqual(queue.next(at: t0.addingTimeInterval(31))?.id, "4b")
+    }
+}
+
 final class LocalModelResidencyTests: XCTestCase {
     private let t0 = Date(timeIntervalSinceReferenceDate: 0)
     private let policy = ResidencyPolicy(idleTimeout: 900, waitBudget: 0.75, assumedLoadDuration: 4)
@@ -186,6 +224,18 @@ final class CommandModeResidencyTests: XCTestCase {
         XCTAssertEqual(loadingSinceShift().readiness(at: shift.addingTimeInterval(0.5)), .unavailable)
     }
 
+    func testWithNothingToFallBackOnALongLoadIsWaitedOut() {
+        XCTAssertEqual(loadingSinceShift().readiness(at: shift.addingTimeInterval(0.5), lastResort: true),
+                       .wait(upTo: .infinity))
+    }
+
+    func testWithNothingToFallBackOnAModelNotOnDiskStillFailsFast() {
+        var residency = LocalModelResidency(policy: .commandMode)
+        XCTAssertEqual(residency.readiness(at: shift, lastResort: true), .unavailable)
+        residency.downloadProgressed(0.5)
+        XCTAssertEqual(residency.readiness(at: shift, lastResort: true), .unavailable)
+    }
+
     func testTheFourBUnloadsAfterFifteenIdleMinutes() {
         var residency = loadingSinceShift()
         residency.loadFinished(at: shift.addingTimeInterval(6))
@@ -228,6 +278,43 @@ final class LocalModelPlanTests: XCTestCase {
         let apple = FakeTextModel("apple", reply: .text("x"))
         XCTAssertEqual(LocalModelPlan(override: nil).commandCandidates(local: qwen, apple: apple).map(\.id), ["qwen", "apple"])
         XCTAssertEqual(LocalModelPlan(override: nil).commandCandidates(local: nil, apple: apple).map(\.id), ["apple"])
+    }
+
+    func testFormattingFollowsTheSettingWithoutOverride() {
+        let qwen = FakeTextModel("qwen", reply: .text("x"))
+        let apple = FakeTextModel("apple", reply: .text("x"))
+        let plan = LocalModelPlan(override: nil)
+        XCTAssertEqual(plan.formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), ["apple", "qwen"])
+        XCTAssertEqual(plan.formattingCandidates(engine: .apple, local: qwen, apple: apple).map(\.id), ["apple"])
+        XCTAssertEqual(plan.formattingCandidates(engine: .off, local: qwen, apple: apple).map(\.id), [])
+    }
+
+    func testOverridesForceTheFormattingCascadeWhateverTheSetting() {
+        let qwen = FakeTextModel("qwen", reply: .text("x"))
+        let apple = FakeTextModel("apple", reply: .text("x"))
+        XCTAssertEqual(LocalModelPlan(override: .local(LocalModels.formatting))
+            .formattingCandidates(engine: .off, local: qwen, apple: apple).map(\.id), ["qwen"])
+        XCTAssertEqual(LocalModelPlan(override: .apple)
+            .formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), ["apple"])
+        XCTAssertEqual(LocalModelPlan(override: .off)
+            .formattingCandidates(engine: .auto, local: qwen, apple: apple).map(\.id), [])
+    }
+
+    func testKeyDownPreloadsTheFormattingModelOnlyWhenTheCascadeWouldReachIt() {
+        let plan = LocalModelPlan(override: nil)
+        XCTAssertFalse(plan.preloadsFormattingModel(engine: .auto, appleAvailable: true))
+        XCTAssertTrue(plan.preloadsFormattingModel(engine: .auto, appleAvailable: false))
+        XCTAssertFalse(plan.preloadsFormattingModel(engine: .apple, appleAvailable: false))
+        XCTAssertTrue(LocalModelPlan(override: .local(LocalModels.formatting))
+            .preloadsFormattingModel(engine: .off, appleAvailable: true))
+        XCTAssertFalse(LocalModelPlan(override: .apple).preloadsFormattingModel(engine: .auto, appleAvailable: false))
+    }
+
+    func testTheCommandModelIsTheLastResortOnlyWhenAppleCantTakeOver() {
+        XCTAssertTrue(LocalModelPlan(override: nil).commandModelIsLastResort(appleAvailable: false))
+        XCTAssertFalse(LocalModelPlan(override: nil).commandModelIsLastResort(appleAvailable: true))
+        XCTAssertTrue(LocalModelPlan(override: .local(LocalModels.formatting)).commandModelIsLastResort(appleAvailable: true))
+        XCTAssertFalse(LocalModelPlan(override: .apple).commandModelIsLastResort(appleAvailable: false))
     }
 
     func testOverridesForceTheCommandModeCascade() {

@@ -65,7 +65,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// `FLOWCLONE_LLM`: forces one language model (or none) for formatting and
     /// Command Mode, bypassing the Formatting menu.
     private let llmOverride: LanguageModelOverride? = {
-        do { return try TextModels.override() } catch {
+        do { return try LanguageModelOverride.fromEnvironment() } catch {
             log.error("\(String(describing: error), privacy: .public)")
             return nil
         }
@@ -84,8 +84,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
     /// Command Mode cascade, best first: Qwen 4B, then Apple. A local model that
     /// isn't loaded (or about to be) reports itself unavailable.
+    /// With nothing after it, a 4B load in progress is waited out.
     private var commandModels: [any TextModel] {
-        localPlan.commandCandidates(local: localPlan.command.flatMap { localModels.model(for: $0) }, apple: appleModel)
+        let model = localPlan.command.flatMap { localModels.model(for: $0) }
+        let lastResort = localPlan.commandModelIsLastResort(appleAvailable: appleModel.isAvailable)
+        return localPlan.commandCandidates(local: lastResort ? model?.asLastResort : model, apple: appleModel)
     }
     private var languages: [String] {
         get {
@@ -115,10 +118,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         state = .loading
         setStatus("Preparing speech model…")
 
-        hotkey.onPress = { [weak self] mode in Task { @MainActor in self?.keyDown(mode: mode) } }
-        hotkey.onModeChanged = { [weak self] mode in Task { @MainActor in self?.modeChanged(mode) } }
-        hotkey.onRelease = { [weak self] mode in Task { @MainActor in await self?.keyUp(mode: mode) } }
-        hotkey.onInterrupt = { [weak self] in Task { @MainActor in await self?.shortcutInterrupted() } }
+        hotkey.onOutputs = { [weak self] outputs in self?.handle(outputs) }
         for (name, model) in [("parakeet", parakeet), ("whisper", whisper)] as [(String, any BatchSpeechEngine)] {
             model.onStatus = { [weak self] status in
                 if case .downloading = status {} else { log.info("\(name, privacy: .public): \(String(describing: status), privacy: .public)") }
@@ -212,6 +212,20 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     // MARK: Pipeline
 
+    /// Hotkey outputs, handled synchronously and in order: every state change
+    /// happens here, before the next key event; only the slow work (stopping
+    /// the recording, transcribing, formatting) continues in a task.
+    private func handle(_ outputs: [HotkeyOutput]) {
+        for output in outputs {
+            switch output {
+            case .press(let mode): keyDown(mode: mode)
+            case .modeChanged(let mode): modeChanged(mode)
+            case .release(let mode): keyUp(mode: mode)
+            case .interrupt: shortcutInterrupted()
+            }
+        }
+    }
+
     private func keyDown(mode: SessionMode) {
         log.info("hotkey down (state: \(String(describing: self.state), privacy: .public))")
         setup.hotkeySeen = true
@@ -223,10 +237,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         // reflects the field the user was in *before* anything changes.
         context = FocusContext.capture()
         pressedAt = Date()
-        hud.model.commandMode = false
+        hud.model.commandMode = mode == .command
         state = .recording
-        // With Shift already held this is Command Mode: `modeChanged` loads its model instead.
-        if mode == .dictation { preloadFormattingModel() }
+        log.info("session mode: \(String(describing: mode), privacy: .public)")
+        preloadModel(for: mode)
         // Delay the start sound so quick shortcuts using the hotkey (⌘C) stay silent.
         Task {
             try? await Task.sleep(for: .seconds(minimumHold))
@@ -255,25 +269,41 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard state == .recording else { return }
         log.info("session mode: \(String(describing: mode), privacy: .public)")
         hud.model.commandMode = mode == .command
-        if mode == .command, let spec = localPlan.command { localModels.prepare(spec) }
+        preloadModel(for: mode)
     }
 
-    private func keyUp(mode: SessionMode) async {
+    /// Key-down or Shift: start loading the session's local model so it overlaps with the recording.
+    private func preloadModel(for mode: SessionMode) {
+        if mode == .command {
+            if let spec = localPlan.command { localModels.prepare(spec) }
+        } else {
+            preloadFormattingModel()
+        }
+    }
+
+    private func keyUp(mode: SessionMode) {
         let held = Date().timeIntervalSince(pressedAt)
         log.info("hotkey up after \(held, format: .fixed(precision: 2))s (state: \(String(describing: self.state), privacy: .public))")
         guard state == .recording, let session else { return }
         self.session = nil
+        // Busy until the session is stopped, so a new press waits for the microphone.
+        state = .processing
 
         if held < minimumHold {
-            await session.cancel()
-            state = .idle
             hud.show(.message("Hold the key while you speak"), autoHideAfter: 1.5)
+            Task {
+                await session.cancel()
+                state = .idle
+            }
             return
         }
 
-        state = .processing
         hud.show(.processing)
         NSSound(named: "Pop")?.play()
+        Task { await finish(session, mode: mode) }
+    }
+
+    private func finish(_ session: any DictationSession, mode: SessionMode) async {
         do {
             let started = Date()
             let transcript = try await session.finish()
@@ -290,7 +320,8 @@ final class AppController: NSObject, NSApplicationDelegate {
                 return
             }
             let request = FormattingRequest(raw: transcript.text, language: transcript.language,
-                                            category: context.category, beforeCursor: context.beforeText)
+                                            category: context.category, beforeCursor: context.beforeText,
+                                            vocabulary: vocabulary())
             let formatStarted = Date()
             let result = await LanguageTasks.format(request, models: formattingModels)
             log.info("formatted via \(result.modelID ?? "none (raw)", privacy: .public) in \(Date().timeIntervalSince(formatStarted), format: .fixed(precision: 2))s")
@@ -326,11 +357,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             // With a selection it is still active, so ⌘V replaces it (and ⌘Z undoes it).
             paste(result.text)
         case .failure(let failure):
-            let message = switch failure {
-            case .noModelAvailable: "No model available for Command Mode"
-            case .outputRejected: "Command Mode couldn't produce usable text"
-            case .emptyInstruction: "Didn't catch that"
-            }
+            let localModel = localPlan.command.flatMap { localModels.model(for: $0)?.state?.phase }
+            let message = failure.message(localModel: localModel)
             log.info("command failed: \(String(describing: failure), privacy: .public)")
             state = .idle
             setStatus(message)
@@ -361,13 +389,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     /// The hotkey was part of a shortcut (⌘C, ⌥[ …): drop the recording silently.
-    private func shortcutInterrupted() async {
+    private func shortcutInterrupted() {
         guard state == .recording, let session else { return }
         self.session = nil
-        await session.cancel()
-        state = .idle
+        state = .processing
         hud.show(.hidden)
         log.info("recording cancelled: hotkey used in a shortcut")
+        Task {
+            await session.cancel()
+            state = .idle
+        }
     }
 
     private func fail(_ message: String) async {
@@ -617,13 +648,7 @@ extension AppController {
     /// Cascade order for this dictation. A local model that isn't loaded (or about
     /// to be) reports itself unavailable, so the cascade moves on without waiting.
     private var formattingModels: [any TextModel] {
-        let local = localModels.model(for: formattingSpec)
-        switch llmOverride {
-        case .apple?: return [appleModel]
-        case .off?: return []
-        case .local?: return local.map { [$0] } ?? []
-        case nil: return formattingEngine.candidates(local: local, apple: appleModel)
-        }
+        localPlan.formattingCandidates(engine: formattingEngine, local: localModels.model(for: formattingSpec), apple: appleModel)
     }
 
     private func startLocalModels() {
@@ -634,22 +659,16 @@ extension AppController {
 
     /// Key-down: start loading the formatting model so it overlaps with the recording.
     private func preloadFormattingModel() {
-        let needed = switch llmOverride {
-        case .local?: true
-        case .apple?, .off?: false
-        case nil: formattingEngine.preloadsLocal(appleAvailable: appleModel.isAvailable)
+        if localPlan.preloadsFormattingModel(engine: formattingEngine, appleAvailable: appleModel.isAvailable) {
+            localModels.prepare(formattingSpec)
         }
-        if needed { localModels.prepare(formattingSpec) }
     }
 
     private func textModelChanged() {
-        let name = formattingSpec == LocalModels.formatting ? "Qwen3 1.7B"
-            : String(formattingSpec.id.split(separator: "/").last ?? "")
-        let text = localModels.statusText(for: formattingSpec, name: name)
+        let text = localModels.statusText(for: formattingSpec, name: formattingSpec.displayName)
         textModelLine.title = text
         if let command = localPlan.command, command != formattingSpec {
-            let name = command == LocalModels.commandMode ? "Qwen3 4B" : String(command.id.split(separator: "/").last ?? "")
-            commandModelLine.title = localModels.statusText(for: command, name: "Command Mode \(name)",
+            commandModelLine.title = localModels.statusText(for: command, name: "Command Mode \(command.displayName)",
                                                             loadsWhen: "you hold Shift")
         }
         setup.textModelStatus = text
