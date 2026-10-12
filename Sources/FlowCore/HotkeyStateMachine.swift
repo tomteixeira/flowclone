@@ -30,10 +30,18 @@ public enum KeyEvent: Equatable, Sendable {
     case keyDown
 }
 
+/// What a push-to-talk session does with the speech: dictate it, or treat it as
+/// an instruction (Command Mode, Shift + the push-to-talk key).
+public enum SessionMode: Equatable, Sendable {
+    case dictation, command
+}
+
 /// What the state machine tells its owner.
 public enum HotkeyOutput: Equatable, Sendable {
     case press
-    case release
+    /// The session switched mode while the key is held (the HUD changes look).
+    case modeChanged(SessionMode)
+    case release(mode: SessionMode)
     /// Another key was used while holding the push-to-talk key: a shortcut, not dictation.
     case interrupt
 }
@@ -44,6 +52,11 @@ public struct HotkeyStateMachine: Sendable {
     public let key: PushToTalkKey
     private var isDown = false
     private var interrupted = false
+    private var mode = SessionMode.dictation
+
+    /// Shift's keycodes (kVK_Shift, kVK_RightShift) and its device-independent flag.
+    private static let shiftKeycodes: Set<Int64> = [56, 60]
+    private static let shiftFlag: UInt64 = 0x20000
 
     public init(key: PushToTalkKey) { self.key = key }
 
@@ -52,17 +65,32 @@ public struct HotkeyStateMachine: Sendable {
         case .keyDown:
             return interrupt()
         case let .flagsChanged(keycode, flags):
-            // Another modifier while holding ours (e.g. ⌥⇧) also means a shortcut.
+            if Self.shiftKeycodes.contains(keycode) { return shiftChanged(flags: flags) }
+            // Another modifier while holding ours (e.g. ⌥⌘) also means a shortcut.
             guard keycode == key.keycode else { return interrupt() }
             let down = key.isDown(flags: flags)
             guard down != isDown else { return [] }
             isDown = down
             if down {
                 interrupted = false
-                return [.press]
+                // Shift already held when the key goes down also means Command Mode.
+                guard flags & Self.shiftFlag != 0 else {
+                    mode = .dictation
+                    return [.press]
+                }
+                mode = .command
+                return [.press, .modeChanged(.command)]
             }
-            return interrupted ? [] : [.release]
+            return interrupted ? [] : [.release(mode: mode)]
         }
+    }
+
+    /// Shift pressed during a hold switches it to Command Mode for good; releasing
+    /// Shift changes nothing, the switch is sticky until the key is released.
+    private mutating func shiftChanged(flags: UInt64) -> [HotkeyOutput] {
+        guard isDown, !interrupted, mode == .dictation, flags & Self.shiftFlag != 0 else { return [] }
+        mode = .command
+        return [.modeChanged(.command)]
     }
 
     /// The first interruption of a hold is reported once; the release is then swallowed.
