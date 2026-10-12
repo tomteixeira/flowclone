@@ -27,7 +27,9 @@ final class HotkeyMonitor {
         set { machine = HotkeyStateMachine(key: newValue) }
     }
     var onPress: () -> Void = {}
-    var onRelease: () -> Void = {}
+    var onRelease: (SessionMode) -> Void = { _ in }
+    /// Shift joined the hold: the session is now Command Mode.
+    var onModeChanged: (SessionMode) -> Void = { _ in }
     /// Another key was pressed while holding the hotkey: it's a shortcut, not dictation.
     var onInterrupt: () -> Void = {}
 
@@ -85,7 +87,8 @@ final class HotkeyMonitor {
         for output in machine.handle(keyEvent) {
             switch output {
             case .press: onPress()
-            case .release: onRelease()
+            case .modeChanged(let mode): onModeChanged(mode)
+            case .release(let mode): onRelease(mode)
             case .interrupt: onInterrupt()
             }
         }

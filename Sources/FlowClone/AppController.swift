@@ -69,6 +69,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// toggle maps to Apple's model or nothing.
     private var formattingEngine: FormattingEngine { cleanupEnabled ? .apple : .off }
     private let appleModel = AppleTextModel()
+    /// Command Mode cascade, best first. Qwen 4B goes in front once it ships (ticket 08).
+    private var commandModels: [any TextModel] { [appleModel] }
     private var languages: [String] {
         get {
             if let saved = defaults.stringArray(forKey: "languages") { return saved }
@@ -98,7 +100,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         setStatus("Preparing speech model…")
 
         hotkey.onPress = { [weak self] in Task { @MainActor in self?.keyDown() } }
-        hotkey.onRelease = { [weak self] in Task { @MainActor in await self?.keyUp() } }
+        hotkey.onModeChanged = { [weak self] mode in Task { @MainActor in self?.modeChanged(mode) } }
+        hotkey.onRelease = { [weak self] mode in Task { @MainActor in await self?.keyUp(mode: mode) } }
         hotkey.onInterrupt = { [weak self] in Task { @MainActor in await self?.shortcutInterrupted() } }
         for (name, model) in [("parakeet", parakeet), ("whisper", whisper)] as [(String, any BatchSpeechEngine)] {
             model.onStatus = { [weak self] status in
@@ -203,6 +206,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         // reflects the field the user was in *before* anything changes.
         context = FocusContext.capture()
         pressedAt = Date()
+        hud.model.commandMode = false
         state = .recording
         // Delay the start sound so quick shortcuts using the hotkey (⌘C) stay silent.
         Task {
@@ -226,7 +230,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func keyUp() async {
+    /// Shift joined the hold: switch the HUD to its Command Mode look. It shows
+    /// as soon as the HUD does (after the tap debounce), or live if already up.
+    private func modeChanged(_ mode: SessionMode) {
+        guard state == .recording else { return }
+        log.info("session mode: \(String(describing: mode), privacy: .public)")
+        hud.model.commandMode = mode == .command
+    }
+
+    private func keyUp(mode: SessionMode) async {
         let held = Date().timeIntervalSince(pressedAt)
         log.info("hotkey up after \(held, format: .fixed(precision: 2))s (state: \(String(describing: self.state), privacy: .public))")
         guard state == .recording, let session else { return }
@@ -253,25 +265,61 @@ final class AppController: NSObject, NSApplicationDelegate {
                 hud.show(.message("Didn't catch that"), autoHideAfter: 1.5)
                 return
             }
+            if mode == .command {
+                await runCommand(transcript)
+                return
+            }
             let request = FormattingRequest(raw: transcript.text, language: transcript.language,
                                             category: context.category, beforeCursor: context.beforeText)
             let text = await LanguageTasks.format(request, models: formattingEngine.candidates(local: nil, apple: appleModel)).text
             let insert = TextHeuristics.withLeadingSpaceIfNeeded(text, before: context.beforeText)
             lastTranscript = text
-            paster.paste(insert) { [weak self] outcome in
-                guard let self else { return }
-                self.state = .idle
-                log.info("paste outcome: \(outcome.rawValue, privacy: .public)")
-                if outcome == .leftOnClipboard {
-                    self.setStatus("The text field didn't take the paste — copied to clipboard (⌘V)")
-                    self.hud.show(.message("Copied to clipboard — press ⌘V"), autoHideAfter: 2.5)
-                } else {
-                    self.hud.show(.hidden)
-                    self.setStatus("Inserted \(text.split(separator: " ").count) words")
-                }
-            }
+            paste(insert)
         } catch {
             await fail("Transcription failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Command Mode: the transcript is an instruction for the selection, or for
+    /// text to write at the cursor. On failure nothing is pasted, least of all
+    /// the instruction itself.
+    private func runCommand(_ transcript: Transcript) async {
+        let request = CommandRequest(instruction: transcript.text, selection: context.selectedText,
+                                     beforeSelection: context.beforeText, afterSelection: context.afterText,
+                                     category: context.category, language: transcript.language)
+        let started = Date()
+        switch await LanguageTasks.command(request, models: commandModels) {
+        case .success(let result):
+            log.info("command: \(result.action == .replaceSelection ? "replace" : "insert", privacy: .public) \(result.text.count) chars via \(result.modelID, privacy: .public) in \(Date().timeIntervalSince(started), format: .fixed(precision: 2))s")
+            lastTranscript = result.text
+            // With a selection it is still active, so ⌘V replaces it (and ⌘Z undoes it).
+            paste(result.text)
+        case .failure(let failure):
+            let message = switch failure {
+            case .noModelAvailable: "No model available for Command Mode"
+            case .outputRejected: "Command Mode couldn't produce usable text"
+            case .emptyInstruction: "Didn't catch that"
+            }
+            log.info("command failed: \(String(describing: failure), privacy: .public)")
+            state = .idle
+            setStatus(message)
+            hud.show(.message(message), autoHideAfter: 2.5)
+            NSSound(named: "Basso")?.play()
+        }
+    }
+
+    private func paste(_ text: String) {
+        paster.paste(text) { [weak self] outcome in
+            guard let self else { return }
+            self.state = .idle
+            log.info("paste outcome: \(outcome.rawValue, privacy: .public)")
+            if outcome == .leftOnClipboard {
+                self.setStatus("The text field didn't take the paste — copied to clipboard (⌘V)")
+                self.hud.show(.message("Copied to clipboard — press ⌘V"), autoHideAfter: 2.5)
+            } else {
+                self.hud.show(.hidden)
+                self.setStatus("Inserted \(text.split(separator: " ").count) words")
+            }
         }
     }
 

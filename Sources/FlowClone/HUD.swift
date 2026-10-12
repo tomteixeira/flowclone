@@ -9,6 +9,8 @@ final class HUDModel: ObservableObject {
     enum Phase: Equatable { case hidden, recording, processing, message(String) }
 
     @Published var phase = Phase.hidden
+    /// Shift joined the push-to-talk hold: speech is an instruction, not dictation.
+    @Published var commandMode = false
     @Published var levels = [Float](repeating: 0, count: 14)
 
     func push(level: Float) {
@@ -24,7 +26,12 @@ private struct HUDView: View {
         HStack(spacing: 8) {
             switch model.phase {
             case .recording:
-                Circle().fill(.red).frame(width: 8, height: 8)
+                if model.commandMode {
+                    Image(systemName: "wand.and.stars").foregroundStyle(.white)
+                    Text("Command").foregroundStyle(.white)
+                } else {
+                    Circle().fill(.red).frame(width: 8, height: 8)
+                }
                 HStack(spacing: 3) {
                     ForEach(model.levels.indices, id: \.self) { i in
                         Capsule()
@@ -35,7 +42,7 @@ private struct HUDView: View {
                 .animation(.easeOut(duration: 0.08), value: model.levels)
             case .processing:
                 ProgressView().controlSize(.small).tint(.white)
-                Text("Transcribing…").foregroundStyle(.white)
+                Text(model.commandMode ? "Working on it…" : "Transcribing…").foregroundStyle(.white)
             case .message(let text):
                 Text(text).foregroundStyle(.white)
             case .hidden:
@@ -45,7 +52,8 @@ private struct HUDView: View {
         .font(.system(size: 12, weight: .medium))
         .padding(.horizontal, 14)
         .frame(height: 34)
-        .background(Capsule().fill(.black.opacity(0.85)))
+        .background(Capsule().fill(model.commandMode && model.phase != .hidden
+            ? Color.purple.opacity(0.9) : Color.black.opacity(0.85)))
         .overlay(Capsule().stroke(.white.opacity(0.15)))
         .fixedSize()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
