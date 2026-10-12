@@ -101,7 +101,7 @@ extension LanguageTasks {
     /// `language`: ISO code from the speech engine. Wispr sends non-English text to a
     /// separate endpoint (`/llm/format_non_english` with `detected_language`).
     static func formattingInstructions(category: AppCategory, language: String?) -> String {
-        let languageName = language.flatMap { Locale(identifier: "en").localizedString(forLanguageCode: $0) }
+        let languageName = language.flatMap(TextHeuristics.languageName)
         let languageRule = languageName.map {
             "The dictation is in \($0). Write the cleaned text in \($0); never translate it."
         } ?? "Keep the language the dictation is in; never translate it."

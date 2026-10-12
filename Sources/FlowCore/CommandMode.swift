@@ -139,12 +139,11 @@ extension LanguageTasks {
             ? "Apply the instruction to the text inside <selection> and output the rewritten text that replaces it."
             : "Write the text the instruction asks for; it is inserted at <cursor/>, between <before> and <after>."
         let languageRule: String
-        if hasSelection, let code = TextHeuristics.dominantLanguage(request.selection),
-           let name = Locale(identifier: "en").localizedString(forLanguageCode: code) {
+        if hasSelection, let name = TextHeuristics.dominantLanguage(request.selection).flatMap(TextHeuristics.languageName) {
             languageRule = "Write in \(name), the language of the selection, unless the instruction asks for a translation."
         } else if hasSelection {
             languageRule = "Write in the language of the selection unless the instruction asks for a translation."
-        } else if let name = request.language.flatMap({ Locale(identifier: "en").localizedString(forLanguageCode: $0) }) {
+        } else if let name = request.language.flatMap(TextHeuristics.languageName) {
             languageRule = "Write in \(name), the language of the instruction, unless it asks for another language."
         } else {
             languageRule = "Write in the language of the instruction unless it asks for another language."
@@ -208,6 +207,11 @@ extension TextHeuristics {
         let endsLine = after.first(where: { !$0.isWhitespace || $0.isNewline })?.isNewline ?? true
         guard preambleOpeners.contains(where: rest.hasPrefix) || (interjected && endsLine) else { return text }
         return after.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// English name of an ISO language code ("fr" → "French"), for prompts.
+    public static func languageName(_ code: String) -> String? {
+        Locale(identifier: "en").localizedString(forLanguageCode: code)
     }
 
     /// ISO code of the dominant language of `text`, nil when unsure.
