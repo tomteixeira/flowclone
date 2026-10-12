@@ -84,7 +84,7 @@ public enum LocalModelPhase: Sendable, Equatable {
 public enum LocalModelReadiness: Sendable, Equatable {
     case ready
     /// A load is in progress and should finish within the budget: wait for it,
-    /// but no longer than this many seconds.
+    /// but no longer than this many seconds (`.infinity`: until it ends).
     case wait(upTo: TimeInterval)
     /// Fall through to the next model in the cascade.
     case unavailable
@@ -152,10 +152,15 @@ public struct LocalModelResidency: Sendable, Equatable {
     /// True when the model is on disk and neither loading nor loaded.
     public var canLoad: Bool { phase == .downloaded }
 
-    public func readiness(at now: Date) -> LocalModelReadiness {
+    /// `lastResort`: no other model could take over, so a load in progress is
+    /// waited out however long it takes rather than giving up after the budget.
+    /// A model that isn't on disk is unavailable either way.
+    public func readiness(at now: Date, lastResort: Bool = false) -> LocalModelReadiness {
         switch phase {
         case .loaded:
             return .ready
+        case .loading where lastResort:
+            return .wait(upTo: .infinity)
         case .loading(let since):
             let expected = lastLoadDuration ?? policy.assumedLoadDuration
             let remaining = since.addingTimeInterval(expected).timeIntervalSince(now)

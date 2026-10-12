@@ -42,6 +42,17 @@ public struct LocalModelPlan: Sendable, Equatable {
         spec == command && spec != formatting ? .commandMode : .standard
     }
 
+    /// Whether the Command Mode local model is the last model that could run
+    /// Command Mode, so a load in progress is worth waiting out: Apple's model
+    /// can't take over, or an override forces the local model alone.
+    public func commandModelIsLastResort(appleAvailable: Bool) -> Bool {
+        switch override {
+        case nil: command != nil && !appleAvailable
+        case .local?: true
+        case .apple?, .off?: false
+        }
+    }
+
     /// Command Mode cascade: the local model, then Apple's. Pass nil for a model
     /// that isn't installed. An override forces its single model.
     public func commandCandidates(local: (any TextModel)?, apple: (any TextModel)?) -> [any TextModel] {

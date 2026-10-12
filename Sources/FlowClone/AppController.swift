@@ -84,8 +84,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
     /// Command Mode cascade, best first: Qwen 4B, then Apple. A local model that
     /// isn't loaded (or about to be) reports itself unavailable.
+    /// With nothing after it, a 4B load in progress is waited out.
     private var commandModels: [any TextModel] {
-        localPlan.commandCandidates(local: localPlan.command.flatMap { localModels.model(for: $0) }, apple: appleModel)
+        let model = localPlan.command.flatMap { localModels.model(for: $0) }
+        let lastResort = localPlan.commandModelIsLastResort(appleAvailable: appleModel.isAvailable)
+        return localPlan.commandCandidates(local: lastResort ? model?.asLastResort : model, apple: appleModel)
     }
     private var languages: [String] {
         get {

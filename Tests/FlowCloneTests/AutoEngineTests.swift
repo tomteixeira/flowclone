@@ -224,6 +224,18 @@ final class CommandModeResidencyTests: XCTestCase {
         XCTAssertEqual(loadingSinceShift().readiness(at: shift.addingTimeInterval(0.5)), .unavailable)
     }
 
+    func testWithNothingToFallBackOnALongLoadIsWaitedOut() {
+        XCTAssertEqual(loadingSinceShift().readiness(at: shift.addingTimeInterval(0.5), lastResort: true),
+                       .wait(upTo: .infinity))
+    }
+
+    func testWithNothingToFallBackOnAModelNotOnDiskStillFailsFast() {
+        var residency = LocalModelResidency(policy: .commandMode)
+        XCTAssertEqual(residency.readiness(at: shift, lastResort: true), .unavailable)
+        residency.downloadProgressed(0.5)
+        XCTAssertEqual(residency.readiness(at: shift, lastResort: true), .unavailable)
+    }
+
     func testTheFourBUnloadsAfterFifteenIdleMinutes() {
         var residency = loadingSinceShift()
         residency.loadFinished(at: shift.addingTimeInterval(6))
@@ -266,6 +278,13 @@ final class LocalModelPlanTests: XCTestCase {
         let apple = FakeTextModel("apple", reply: .text("x"))
         XCTAssertEqual(LocalModelPlan(override: nil).commandCandidates(local: qwen, apple: apple).map(\.id), ["qwen", "apple"])
         XCTAssertEqual(LocalModelPlan(override: nil).commandCandidates(local: nil, apple: apple).map(\.id), ["apple"])
+    }
+
+    func testTheCommandModelIsTheLastResortOnlyWhenAppleCantTakeOver() {
+        XCTAssertTrue(LocalModelPlan(override: nil).commandModelIsLastResort(appleAvailable: false))
+        XCTAssertFalse(LocalModelPlan(override: nil).commandModelIsLastResort(appleAvailable: true))
+        XCTAssertTrue(LocalModelPlan(override: .local(LocalModels.formatting)).commandModelIsLastResort(appleAvailable: true))
+        XCTAssertFalse(LocalModelPlan(override: .apple).commandModelIsLastResort(appleAvailable: false))
     }
 
     func testOverridesForceTheCommandModeCascade() {
