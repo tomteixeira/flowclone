@@ -1,0 +1,47 @@
+Qwen3.5 2B (MLX, mlx-community/Qwen3.5-2B-4bit) on eval/formatting-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding, thinking off (enable_thinking: false).
+Prompt: same formatting prompt as the Apple baseline (with French examples, ticket 03).
+Revision: main, resolved to 674aaa7240b91e8012fcad5d791b7dfe5ba90207 on huggingface.co (2026-10-12).
+Command: .build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine mlx-community/Qwen3.5-2B-4bit --out eval/baselines/qwen3.5-2b.jsonl
+Latency contamination: low. No other FlowClone eval or MLX process ran during the run (checked before
+  and after); other agents' `swift build` jobs may have been running, so latency may be slightly inflated.
+
+engine: mlx-community/Qwen3.5-2B-4bit
+output: eval/baselines/qwen3.5-2b.jsonl
+cases: 80 (accepted 71, rejected 3, skipped 6)
+latency p50: 350 ms, p95: 518 ms
+load time: 3189 ms, peak memory: 830 MB
+guard pass rate: 96%
+rule-check failures: 21 in 13 cases
+  expect_not_contains: 11
+  expect_contains: 3
+  expect_ends_with: 3
+  guards_rejected: 3
+  language_changed: 1
+
+Notes
+- Template honours enable_thinking: false (empty think block); no reasoning leaked into outputs.
+- Fast (p50 350 ms) but sloppy on self-corrections: keeps both sides in en-correction-2, fr-correction-2,
+  fr-correction-5, en-long-1, and drops the correction entirely in en-correction-5 ("some milk").
+- Leaves "uh"/"um" in en-long-1; switches tu -> vous ("Envoyez-le", "Réservez", "Oubliez") in French.
+- Changes meaning: fr-chat-2 "Je commence sans moi.", fr-chat-3 rewrites the reply, fr-command-2 translates.
+- Drops "?" on fr-chat-4, fr-noun-2, fr-correction-5.
+- Load time and peak memory were measured after a one-case warm-up run that downloaded the weights, so
+  they come from a warm OS page cache and exclude the download. Both swing a lot run to run: a repeat of
+  Qwen3 4B gave load 2.9 s / peak 735 MB vs 0.9 s / 1946 MB in its baseline. Peak memory is ru_maxrss of
+  FlowClone, which undercounts mmapped weights; the on-disk size (COMPARISON.md) is the better residency estimate.
+
+Failing cases
+en-correction-2: expect_not_contains:John, expect_not_contains:I mean
+en-correction-5: expect_contains:oat milk
+en-email-5: expect_not_contains:Hi David
+en-long-1: expect_not_contains:um, expect_not_contains:uh, expect_not_contains:Monday
+fr-filler-1: guards_rejected
+fr-correction-2: expect_not_contains:Jean, expect_not_contains:je veux dire
+fr-correction-5: expect_not_contains:enfin, expect_ends_with:?
+fr-command-2: guards_rejected, language_changed, expect_contains:anglais, expect_not_contains:Translate
+fr-chat-2: expect_contains:retard
+fr-chat-3: guards_rejected
+fr-chat-4: expect_ends_with:?
+fr-noun-2: expect_ends_with:?
+fr-long-1: expect_not_contains:lundi

@@ -1,0 +1,44 @@
+Apple foundation model (release build) on eval/formatting-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding.
+Prompt: same formatting prompt as the Apple baseline (with French examples, ticket 03).
+Command: .build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine apple --out eval/baselines/apple-release.jsonl
+Latency contamination: low. No other FlowClone eval or MLX process ran during the run (checked before
+  and after); other agents' `swift build` jobs may have been running, so latency may be slightly inflated.
+
+engine: apple
+output: eval/baselines/apple-release.jsonl
+cases: 80 (accepted 67, error 1, rejected 6, skipped 6)
+latency p50: 509 ms, p95: 756 ms
+load time: 1062 ms, peak memory: 26 MB
+guard pass rate: 92%
+rule-check failures: 22 in 17 cases
+  expect_not_contains: 10
+  guards_rejected: 6
+  expect_contains: 2
+  expect_ends_with: 2
+  language_changed: 1
+  model_error: 1
+
+Notes
+- Same model and prompt as apple.summary.txt, re-run on the release build so latency compares with the MLX
+  runs. Rule-check results are identical to the debug-build baseline (same 17 failing cases).
+- Peak memory is FlowClone's own process; Apple's model runs in a system daemon and isn't counted.
+
+Failing cases
+en-correction-4: expect_not_contains:Monday, expect_not_contains:scratch that
+en-correction-5: expect_not_contains:I mean
+en-command-3: guards_rejected, expect_contains:joke
+en-email-5: expect_not_contains:Hi David
+en-chat-3: guards_rejected
+en-code-2: guards_rejected
+en-long-1: expect_not_contains:Monday
+fr-filler-2: expect_not_contains:tu vois
+fr-filler-3: expect_not_contains:bah
+fr-correction-5: expect_ends_with:?
+fr-command-2: guards_rejected, language_changed, expect_contains:anglais, expect_not_contains:Translate
+fr-command-3: model_error
+fr-email-5: expect_not_contains:Bonjour David
+fr-chat-3: guards_rejected
+fr-code-2: guards_rejected
+fr-noun-2: expect_ends_with:?
+fr-long-1: expect_not_contains:lundi

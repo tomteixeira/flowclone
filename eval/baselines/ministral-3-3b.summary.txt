@@ -1,0 +1,49 @@
+Ministral 3 3B Instruct 2512 (MLX, mlx-community/Ministral-3-3B-Instruct-2512-4bit) on eval/formatting-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding, thinking off (enable_thinking: false).
+Prompt: same formatting prompt as the Apple baseline (with French examples, ticket 03).
+Revision: main, resolved to a962dcb09eee4169c890e544c9eb938f1113fdee on huggingface.co (2026-10-12).
+Command: .build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine mlx-community/Ministral-3-3B-Instruct-2512-4bit --out eval/baselines/ministral-3-3b.jsonl
+Latency contamination: low. No other FlowClone eval or MLX process ran during the run (checked before
+  and after); other agents' `swift build` jobs may have been running, so latency may be slightly inflated.
+
+engine: mlx-community/Ministral-3-3B-Instruct-2512-4bit
+output: eval/baselines/ministral-3-3b.jsonl
+cases: 80 (accepted 67, rejected 7, skipped 6)
+latency p50: 520 ms, p95: 836 ms
+load time: 1026 ms, peak memory: 2708 MB
+guard pass rate: 91%
+rule-check failures: 21 in 16 cases
+  expect_contains: 7
+  guards_rejected: 7
+  expect_not_contains: 5
+  expect_ends_with: 2
+
+Notes
+- Loads as the text-only mistral3 model; no thinking flag in its template.
+- Rewrites instead of formatting: translates en-command-2 into Spanish, turns fr-long-1 into a numbered list
+  that keeps "lundi" and drops "mardi", writes a Swift function for en-code-2, conjugation errors
+  ("Se voyez à 15 h", "il y a ce trimestre"). 7 guard rejections.
+- Rewrites tone: "Tu peux ..." -> "Mets ..."/"Prends ..." (drops the question), drops the signature in
+  fr-email-1, over-shortens fr-chat-2 ("Commencez sans moi.").
+- Load time and peak memory were measured after a one-case warm-up run that downloaded the weights, so
+  they come from a warm OS page cache and exclude the download. Both swing a lot run to run: a repeat of
+  Qwen3 4B gave load 2.9 s / peak 735 MB vs 0.9 s / 1946 MB in its baseline. Peak memory is ru_maxrss of
+  FlowClone, which undercounts mmapped weights; the on-disk size (COMPARISON.md) is the better residency estimate.
+
+Failing cases
+en-command-2: guards_rejected, expect_contains:Spanish, expect_not_contains:Traduce
+en-email-5: expect_not_contains:Hi David
+en-code-2: guards_rejected
+en-code-3: expect_contains:active users
+en-long-1: expect_not_contains:Monday
+fr-correction-1: guards_rejected
+fr-correction-5: expect_contains:lait d'avoine, expect_ends_with:?
+fr-email-1: expect_contains:Thomas
+fr-email-2: guards_rejected
+fr-email-5: expect_not_contains:Bonjour David
+fr-chat-2: expect_contains:retard
+fr-chat-3: guards_rejected
+fr-code-3: expect_contains:active users
+fr-noun-2: expect_ends_with:?
+fr-noun-3: guards_rejected
+fr-long-1: guards_rejected, expect_contains:mardi, expect_not_contains:lundi

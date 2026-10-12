@@ -1,0 +1,57 @@
+SmolLM3 3B (MLX, mlx-community/SmolLM3-3B-4bit) on eval/formatting-corpus.jsonl
+Machine: Apple M5, 16 GB, macOS 26.2. Date: 2026-10-12. Release build (swift build -c release), greedy decoding, thinking off (enable_thinking: false).
+Prompt: same formatting prompt as the Apple baseline (with French examples, ticket 03).
+Revision: main, resolved to d3a7e0594d6642dbcfb7d149bed8b0bdf49f95ce on huggingface.co (2026-10-12).
+Command: .build/release/FlowClone --eval eval/formatting-corpus.jsonl --engine mlx-community/SmolLM3-3B-4bit --out eval/baselines/smollm3-3b.jsonl
+Latency contamination: low. No other FlowClone eval or MLX process ran during the run (checked before
+  and after); other agents' `swift build` jobs may have been running, so latency may be slightly inflated.
+
+engine: mlx-community/SmolLM3-3B-4bit
+output: eval/baselines/smollm3-3b.jsonl
+cases: 80 (accepted 67, rejected 7, skipped 6)
+latency p50: 536 ms, p95: 805 ms
+load time: 918 ms, peak memory: 1852 MB
+guard pass rate: 91%
+rule-check failures: 30 in 23 cases
+  expect_not_contains: 14
+  guards_rejected: 7
+  expect_ends_with: 5
+  expect_contains: 3
+  language_changed: 1
+
+Notes
+- Template defaults to thinking on; enable_thinking: false switches it to /no_think and no reasoning leaked.
+- Leaks prompt structure: wraps French outputs in <dictation>...</dictation> (fr-filler-1..4, fr-chat-2,
+  fr-chat-4, fr-code-4) and emits empty <before_cursor></before_cursor>; the tag-wrapping strip saves the
+  text but the fillers stay ("euh", "genre", "tu vois", "bah"). Weak on French overall.
+- Keeps both sides of corrections (en-correction-2/5, fr-email-3 keeps "mars"), echoes before-cursor in
+  en/fr-chat-3 and en/fr-email-5, tells the joke in en-command-3, translates fr-noun-1 to English.
+- Load time and peak memory were measured after a one-case warm-up run that downloaded the weights, so
+  they come from a warm OS page cache and exclude the download. Both swing a lot run to run: a repeat of
+  Qwen3 4B gave load 2.9 s / peak 735 MB vs 0.9 s / 1946 MB in its baseline. Peak memory is ru_maxrss of
+  FlowClone, which undercounts mmapped weights; the on-disk size (COMPARISON.md) is the better residency estimate.
+
+Failing cases
+en-correction-2: expect_not_contains:John
+en-correction-5: expect_not_contains:I mean
+en-command-3: guards_rejected
+en-email-5: expect_not_contains:Hi David
+en-chat-3: guards_rejected
+en-code-1: expect_contains:git commit
+en-code-4: guards_rejected, expect_not_contains:um
+en-long-1: expect_not_contains:Monday
+fr-filler-1: expect_not_contains:euh, expect_ends_with:.
+fr-filler-2: expect_not_contains:genre, expect_not_contains:tu vois
+fr-filler-3: expect_contains:dix minutes, expect_not_contains:bah
+fr-filler-4: expect_not_contains:euh, expect_ends_with:.
+fr-correction-1: guards_rejected
+fr-correction-5: expect_ends_with:?
+fr-email-3: expect_contains:avril
+fr-email-5: expect_not_contains:Bonjour David
+fr-chat-2: expect_not_contains:euh
+fr-chat-3: guards_rejected
+fr-chat-4: expect_ends_with:?
+fr-code-4: expect_not_contains:euh
+fr-noun-1: guards_rejected, language_changed
+fr-noun-2: guards_rejected, expect_ends_with:?
+fr-long-1: expect_not_contains:lundi
